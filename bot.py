@@ -12,11 +12,11 @@ from telegram.ext import Application, MessageHandler, filters, ContextTypes
 # ==========================================
 # 1. CONFIGURACIÓN DE TUS DATOS
 # ==========================================
-TELEGRAM_TOKEN = "fc389bd2dcdb6a12d0c7d839b0d4cf58"
+TELEGRAM_TOKEN = "8801288601:AAGjU2UNrzNurMg1XGVdL_tWjrLqIcRBWUc"
 CANAL_ID = "@mundopadelesp"
 
 # Pega aquí la API Key que obtuviste en ScraperAPI.com
-SCRAPER_API_KEY = "PEGA_AQUI_TU_SCRAPER_API_KEY"
+SCRAPER_API_KEY = "fc389bd2dcdb6a12d0c7d839b0d4cf58"
 
 # ==========================================
 # 2. SERVIDOR WEB (Para Render)
