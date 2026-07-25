@@ -1,10 +1,17 @@
 import os
 import io
-import requests
 import threading
+import requests
+from PIL import Image, ImageDraw, ImageFont
 from flask import Flask
+from telegram import Update
+from telegram.ext import Application, MessageHandler, filters, ContextTypes
 
-# Servidor web falso para que Render no mate el proceso
+# --- CONFIGURACIÓN DE TUS DATOS ---
+TELEGRAM_TOKEN = "8801288601:AAGjU2UNrzNurMg1XGVdL_tWjrLqIcRBWUc"
+CANAL_ID = "@mundopadelesp"
+
+# --- SERVIDOR WEB PARA MANTENER RENDER ACTIVO GRATIS ---
 web_app = Flask('')
 
 @web_app.route('/')
@@ -14,31 +21,25 @@ def home():
 def run_web():
     web_app.run(host='0.0.0.0', port=8080)
 
-threading.Thread(target=run_web).start()
+threading.Thread(target=run_web, daemon=True).start()
 
-from PIL import Image, ImageDraw, ImageFont
-from telegram import Update
-from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
-
-# --- TUS DATOS ---
-TELEGRAM_TOKEN = "8801288601:AAGjU2UNrzNurMg1XGVdL_tWjrLqIcRBWUc"
-CANAL_ID = "@mundopadelesp" # Incluye el @
-
+# --- FUNCIÓN PARA GENERAR LA IMAGEN CON FRANJA NEGRA Y PRECIOS ---
 def generar_imagen_chollo(url_imagen, p_oferta, p_antiguo, tienda="amazon"):
     # 1. Descargar imagen original
-    resp = requests.get(url_imagen)
+    headers = {'User-Agent': 'Mozilla/5.0'}
+    resp = requests.get(url_imagen, headers=headers)
     img_prod = Image.open(io.BytesIO(resp.content)).convert("RGBA")
     img_prod = img_prod.resize((800, 800))
 
-    # 2. Lienzo blanco
+    # 2. Lienzo blanco (800x920px)
     lienzo = Image.new("RGBA", (800, 920), (255, 255, 255, 255))
     lienzo.paste(img_prod, (0, 0))
 
-    # 3. Franja negra inferior
+    # 3. Dibujar franja negra inferior
     draw = ImageDraw.Draw(lienzo)
     draw.rectangle([(0, 800), (800, 920)], fill=(20, 20, 20))
 
-    # 4. Fuentes
+    # 4. Configurar fuentes
     try:
         font_p = ImageFont.truetype("arial.ttf", 55)
         font_a = ImageFont.truetype("arial.ttf", 35)
@@ -46,7 +47,7 @@ def generar_imagen_chollo(url_imagen, p_oferta, p_antiguo, tienda="amazon"):
     except:
         font_p = font_a = font_t = ImageFont.load_default()
 
-    # 5. Textos (Tienda, Oferta, Antiguo)
+    # 5. Escribir Tienda/Logo, Precio Oferta y Precio Antiguo
     color_tienda = (255, 153, 0) if tienda.lower() == "amazon" else (255, 71, 19)
     draw.text((20, 835), tienda.capitalize(), fill=color_tienda, font=font_t)
     draw.text((240, 825), f"{p_oferta}€", fill=(255, 255, 255), font=font_p)
@@ -55,54 +56,44 @@ def generar_imagen_chollo(url_imagen, p_oferta, p_antiguo, tienda="amazon"):
     draw.text((600, 835), f"{p_antiguo}€", fill=(220, 50, 50), font=font_a)
     draw.line([(595, 855), (710, 855)], fill=(220, 50, 50), width=3)
 
-    # Guardar en memoria
+    # Convertir y guardar en memoria
     output = io.BytesIO()
     lienzo.convert("RGB").save(output, format='JPEG')
     output.seek(0)
     return output
 
+# --- RECEPCIÓN Y PROCESAMIENTO DE MENSAJES ---
 async def recibir_mensaje(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    texto = update.message.text
+    
+    # Unificar saltos de línea y limpiar campos
+    linea_limpia = texto.replace('\n', ' ')
+    datos = [d.strip() for d in linea_limpia.split("|") if d.strip()]
+    
+    if len(datos) != 6:
+        await update.message.reply_text(
+            f"❌ **He leído {len(datos)} de 6 campos.**\n\n"
+            f"Recuerda usar exactamente **5 barras `|`** para separar los 6 datos:\n"
+            f"`FOTO | PRECIO | ANTES | TIENDA | TITULO | LINK`"
+        )
+        return
+
     try:
-        texto = update.message.text
-        # Separar por el caracter |
-        datos = [d.strip() for d in texto.split("|")]
-        
-        # Comprobar que al menos vienen los 6 datos
-        if len(datos) < 6:
-            await update.message.reply_text(
-                "❌ **Faltan datos.** Asegúrate de enviar los 6 campos separados por `|`:\n\n"
-                "`URL_FOTO | PRECIO_OFERTA | PRECIO_ANTIGUO | TIENDA | TITULO | ENLACE`"
-            )
-            return
+        url_foto, p_oferta, p_antiguo, tienda, titulo, enlace = datos
 
-        url_foto = datos[0]
-        p_oferta = datos[1]
-        p_antiguo = datos[2]
-        tienda = datos[3]
-        titulo = datos[4]
-        enlace = datos[5]
+        msg_espera = await update.message.reply_text("⏳ Generando imagen y publicando...")
 
-        # Avisar de que se está procesando
-        msg_espera = await update.message.reply_text("⏳ Generando imagen y publicando chollo...")
-
-        # Crear imagen en memoria
         foto_bytes = generar_imagen_chollo(url_foto, p_oferta, p_antiguo, tienda)
 
-        # Texto del mensaje para el canal
         caption = f"🔥 **{titulo}**\n\n💰 **Precio:** {p_oferta}€ *(Antes: {p_antiguo}€)*\n\n🛒 **Comprar aquí:** {enlace}"
         
-        # Enviar al canal
         await context.bot.send_photo(chat_id=CANAL_ID, photo=foto_bytes, caption=caption, parse_mode="Markdown")
-        
-        # Confirmación
-        await context.bot.delete_message(chat_id=update.effective_chat.id, message_id=msg_espera.message_id)
         await update.message.reply_text("✅ ¡Publicado en el canal con éxito!")
 
     except Exception as e:
-        await update.message.reply_text(f"❌ Error al procesar: {str(e)}")
+        await update.message.reply_text(f"❌ Error al crear/enviar la imagen: {str(e)}")
 
-
-      
+# --- ARRANQUE DEL BOT ---
 if __name__ == '__main__':
     app = Application.builder().token(TELEGRAM_TOKEN).build()
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, recibir_mensaje))
