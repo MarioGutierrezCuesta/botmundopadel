@@ -1,4 +1,4 @@
-import os
+   import os
 import io
 import threading
 import requests
@@ -28,34 +28,7 @@ def run_web():
 threading.Thread(target=run_web, daemon=True).start()
 
 # ==========================================
-# 3. CARGA DE FUENTE GIGANTE DESDE GOOGLE
-# ==========================================
-URL_FONT_BOLD = "https://github.com/google/fonts/raw/main/ofl/montserrat/Montserrat-Bold.ttf"
-URL_FONT_REGULAR = "https://github.com/google/fonts/raw/main/ofl/montserrat/Montserrat-Regular.ttf"
-
-try:
-    bytes_font_bold = io.BytesIO(requests.get(URL_FONT_BOLD, timeout=10).content)
-    bytes_font_regular = io.BytesIO(requests.get(URL_FONT_REGULAR, timeout=10).content)
-    FONT_OBTENIDA = True
-except Exception:
-    FONT_OBTENIDA = False
-
-def obtener_fuentes():
-    if FONT_OBTENIDA:
-        bytes_font_bold.seek(0)
-        bytes_font_regular.seek(0)
-        font_logo = ImageFont.truetype(bytes_font_bold, 38)
-        bytes_font_bold.seek(0)
-        font_p = ImageFont.truetype(bytes_font_bold, 65)
-        bytes_font_regular.seek(0)
-        font_a = ImageFont.truetype(bytes_font_regular, 36)
-        return font_logo, font_p, font_a
-    else:
-        f = ImageFont.load_default(size=50)
-        return f, f, f
-
-# ==========================================
-# 4. GENERADOR DE IMAGEN (Con verificación de formato)
+# 3. GENERADOR DE IMAGEN
 # ==========================================
 def generar_imagen_chollo(url_imagen, p_oferta, p_antiguo, tienda="amazon"):
     headers = {
@@ -63,21 +36,11 @@ def generar_imagen_chollo(url_imagen, p_oferta, p_antiguo, tienda="amazon"):
         'Accept': 'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8'
     }
     
-    # Limpieza básica de la URL por si contiene espacios
-    url_imagen = url_imagen.strip()
-    
-    resp = requests.get(url_imagen, headers=headers, timeout=12)
+    resp = requests.get(url_imagen.strip(), headers=headers, timeout=12)
     resp.raise_for_status()
 
-    # Comprobar si lo devuelto es realmente una imagen
-    content_type = resp.headers.get('Content-Type', '')
-    if 'text/html' in content_type:
-        raise ValueError("La URL proporcionada es una página web, no un enlace directo a una imagen.")
-
-    # Abrir e interpretar la imagen
     img_bytes = io.BytesIO(resp.content)
-    img_prod = Image.open(img_bytes)
-    img_prod = img_prod.convert("RGBA")
+    img_prod = Image.open(img_bytes).convert("RGBA")
     img_prod = img_prod.resize((800, 800))
 
     lienzo = Image.new("RGBA", (800, 920), (255, 255, 255, 255))
@@ -86,22 +49,24 @@ def generar_imagen_chollo(url_imagen, p_oferta, p_antiguo, tienda="amazon"):
     draw = ImageDraw.Draw(lienzo)
     draw.rectangle([(0, 800), (800, 920)], fill=(20, 20, 20))
 
-    font_logo, font_p, font_a = obtener_fuentes()
+    # Carga segura de fuentes
+    try:
+        font_logo = ImageFont.truetype("DejaVuSans-Bold.ttf", 36)
+        font_p = ImageFont.truetype("DejaVuSans-Bold.ttf", 55)
+        font_a = ImageFont.truetype("DejaVuSans.ttf", 32)
+    except:
+        font_logo = font_p = font_a = ImageFont.load_default(size=40)
 
     nombre_tienda = tienda.lower()
     color_tienda = (255, 153, 0) if "amazon" in nombre_tienda else (255, 71, 19)
     
-    # Nombre Tienda / Logo
     draw.text((25, 835), tienda.lower(), fill=color_tienda, font=font_logo)
     if "amazon" in nombre_tienda:
-        draw.arc([35, 870, 130, 890], start=10, end=170, fill=(255, 153, 0), width=4)
+        draw.arc([35, 865, 130, 885], start=10, end=170, fill=(255, 153, 0), width=4)
 
-    # Precio Oferta
-    draw.text((250, 820), f"{p_oferta}€", fill=(255, 255, 255), font=font_p)
-
-    # Precio Antiguo Tachado
-    draw.text((630, 835), f"{p_antiguo}€", fill=(220, 60, 60), font=font_a)
-    draw.line([(620, 855), (750, 855)], fill=(220, 60, 60), width=3)
+    draw.text((250, 825), f"{p_oferta}€", fill=(255, 255, 255), font=font_p)
+    draw.text((630, 840), f"{p_antiguo}€", fill=(220, 60, 60), font=font_a)
+    draw.line([(625, 858), (750, 858)], fill=(220, 60, 60), width=3)
 
     output = io.BytesIO()
     lienzo.convert("RGB").save(output, format='JPEG', quality=95)
@@ -109,7 +74,7 @@ def generar_imagen_chollo(url_imagen, p_oferta, p_antiguo, tienda="amazon"):
     return output
 
 # ==========================================
-# 5. PROCESAMIENTO DE MENSAJES
+# 4. PROCESAMIENTO DE MENSAJES
 # ==========================================
 async def recibir_mensaje(update: Update, context: ContextTypes.DEFAULT_TYPE):
     texto = update.message.text
@@ -162,9 +127,10 @@ async def recibir_mensaje(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"❌ Error al procesar: {str(e)}")
 
 # ==========================================
-# 6. ARRANQUE DEL BOT
+# 5. ARRANQUE DEL BOT
 # ==========================================
 if __name__ == '__main__':
     app = Application.builder().token(TELEGRAM_TOKEN).build()
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, recibir_mensaje))
     app.run_polling()
+ 
