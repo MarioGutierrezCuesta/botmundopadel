@@ -1,6 +1,7 @@
 import os
 import io
 import re
+import json
 import threading
 import requests
 from bs4 import BeautifulSoup
@@ -10,7 +11,7 @@ from telegram import Update
 from telegram.ext import Application, MessageHandler, filters, ContextTypes
 
 # ==========================================
-# 1. CONFIGURACIÓN TUS DATOS
+# 1. CONFIGURACIÓN DE TUS DATOS
 # ==========================================
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN", "8801288601:AAGjU2UNrzNurMg1XGVdL_tWjrLqIcRBWUc")
 SCRAPER_API_KEY = os.environ.get("SCRAPER_API_KEY", "fc389bd2dcdb6a12d0c7d839b0d4cf58")
@@ -31,7 +32,7 @@ def run_web():
 threading.Thread(target=run_web, daemon=True).start()
 
 # ==========================================
-# 3. EXTRACCIÓN CON SCRAPERAPI
+# 3. EXTRACCIÓN ULTRA-ROBUSTA CON SCRAPERAPI
 # ==========================================
 def obtener_datos_amazon_scraper(url_afiliado):
     if not SCRAPER_API_KEY:
@@ -51,13 +52,19 @@ def obtener_datos_amazon_scraper(url_afiliado):
     url_foto = None
     titulo = "Producto de Padel"
 
-    # Extraer la imagen principal
-    img_tag = soup.find("img", {"id": "landingImage"}) or soup.find("img", {"id": "imgBlkFront"})
+    # MÉTODOS MULTIPLES PARA ENCONTRAR LA FOTO PRINCIPAL
+    # 1. Vías estándar de productos normales
+    img_tag = (
+        soup.find("img", {"id": "landingImage"}) or 
+        soup.find("img", {"id": "imgBlkFront"}) or
+        soup.find("img", {"id": "main-image"}) or
+        soup.find("img", {"class": "a-dynamic-image"})
+    )
+
     if img_tag:
         if img_tag.get("data-old-hires"):
             url_foto = img_tag["data-old-hires"]
         elif img_tag.get("data-a-dynamic-image"):
-            import json
             try:
                 dyn_dict = json.loads(img_tag["data-a-dynamic-image"])
                 url_foto = list(dyn_dict.keys())[0]
@@ -66,15 +73,38 @@ def obtener_datos_amazon_scraper(url_afiliado):
         if not url_foto and img_tag.get("src"):
             url_foto = img_tag["src"]
 
+    # 2. Vía OpenGraph (Meta tags)
     if not url_foto:
-        og_img = soup.find("meta", property="og:image")
+        og_img = soup.find("meta", property="og:image") or soup.find("meta", {"name": "twitter:image"})
         if og_img and og_img.get("content"):
             url_foto = og_img["content"]
 
+    # 3. Vía JSON-LD / Scripts incrustados en Amazon
+    if not url_foto:
+        scripts = soup.find_all("script", type="text/javascript")
+        for s in scripts:
+            if s.string and "colorImages" in s.string:
+                match = re.search(r'"hiRes"\s*:\s*"(https://[^"]+)"', s.string) or re.search(r'"large"\s*:\s*"(https://[^"]+)"', s.string)
+                if match:
+                    url_foto = match.group(1)
+                    break
+
+    # 4. Búsqueda de emergencia por patrón de servidor de medios de Amazon
+    if not url_foto:
+        all_imgs = soup.find_all("img", src=True)
+        for img in all_imgs:
+            src = img["src"]
+            if "media-amazon.com/images/I/" in src and not src.endswith(".gif") and "sprite" not in src:
+                url_foto = src
+                break
+
+    # Limpiar parámetros de resolución para forzar la foto en Máxima Calidad HD
     if url_foto and "media-amazon.com" in url_foto:
         url_foto = re.sub(r'\._AC_.*_\.', '.', url_foto)
+        url_foto = re.sub(r'\._SX\d+_\.', '.', url_foto)
+        url_foto = re.sub(r'\._SY\d+_\.', '.', url_foto)
 
-    # Extraer el Título
+    # EXTRACCIÓN DEL TÍTULO
     title_tag = soup.find("span", {"id": "productTitle"})
     if title_tag:
         titulo = title_tag.text.strip()
@@ -84,7 +114,7 @@ def obtener_datos_amazon_scraper(url_afiliado):
             titulo = og_title["content"].split(":")[0].strip()
 
     if not url_foto:
-        raise ValueError("No se pudo obtener la imagen de Amazon. Revisa la URL.")
+        raise ValueError("No se pudo obtener la imagen de Amazon. Intenta usar el enlace largo del navegador.")
 
     return url_foto, titulo
 
@@ -109,7 +139,7 @@ def crear_degradado_fondo(ancho, alto):
     return base
 
 def generar_imagen_chollo(url_imagen, p_oferta, p_antiguo, logo_canal_bytes=None):
-    headers = {'User-Agent': 'Mozilla/5.0'}
+    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
     resp = requests.get(url_imagen, headers=headers, timeout=15)
     resp.raise_for_status()
 
@@ -167,7 +197,7 @@ def generar_imagen_chollo(url_imagen, p_oferta, p_antiguo, logo_canal_bytes=None
     return output
 
 # ==========================================
-# 5. MANEJO DE MENSAJES (Formato 3 o 4 campos)
+# 5. MANEJO DE MENSAJES
 # ==========================================
 async def recibir_mensaje(update: Update, context: ContextTypes.DEFAULT_TYPE):
     texto = update.message.text
