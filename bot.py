@@ -25,9 +25,14 @@ threading.Thread(target=run_web, daemon=True).start()
 
 # --- FUNCIÓN PARA GENERAR LA IMAGEN CON FRANJA NEGRA Y PRECIOS ---
 def generar_imagen_chollo(url_imagen, p_oferta, p_antiguo, tienda="amazon"):
-    # 1. Descargar imagen original
-    headers = {'User-Agent': 'Mozilla/5.0'}
-    resp = requests.get(url_imagen, headers=headers)
+    # 1. Descargar imagen simulando un navegador real
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept': 'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8'
+    }
+    resp = requests.get(url_imagen, headers=headers, timeout=10)
+    resp.raise_for_status()  # Confirma que la descarga fue correcta
+    
     img_prod = Image.open(io.BytesIO(resp.content)).convert("RGBA")
     img_prod = img_prod.resize((800, 800))
 
@@ -61,6 +66,7 @@ def generar_imagen_chollo(url_imagen, p_oferta, p_antiguo, tienda="amazon"):
     lienzo.convert("RGB").save(output, format='JPEG')
     output.seek(0)
     return output
+
 
 # --- RECEPCIÓN Y PROCESAMIENTO DE MENSAJES ---
 async def recibir_mensaje(update: Update, context: ContextTypes.DEFAULT_TYPE):
