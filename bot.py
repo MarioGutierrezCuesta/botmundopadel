@@ -37,7 +37,7 @@ try:
     bytes_font_bold = io.BytesIO(requests.get(URL_FONT_BOLD, timeout=10).content)
     bytes_font_regular = io.BytesIO(requests.get(URL_FONT_REGULAR, timeout=10).content)
     FONT_OBTENIDA = True
-except Exception as e:
+except Exception:
     FONT_OBTENIDA = False
 
 def obtener_fuentes():
@@ -55,17 +55,29 @@ def obtener_fuentes():
         return f, f, f
 
 # ==========================================
-# 4. GENERADOR DE IMAGEN (Estilo exacto)
+# 4. GENERADOR DE IMAGEN (Con verificación de formato)
 # ==========================================
 def generar_imagen_chollo(url_imagen, p_oferta, p_antiguo, tienda="amazon"):
     headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
         'Accept': 'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8'
     }
-    resp = requests.get(url_imagen, headers=headers, timeout=10)
+    
+    # Limpieza básica de la URL por si contiene espacios
+    url_imagen = url_imagen.strip()
+    
+    resp = requests.get(url_imagen, headers=headers, timeout=12)
     resp.raise_for_status()
 
-    img_prod = Image.open(io.BytesIO(resp.content)).convert("RGBA")
+    # Comprobar si lo devuelto es realmente una imagen
+    content_type = resp.headers.get('Content-Type', '')
+    if 'text/html' in content_type:
+        raise ValueError("La URL proporcionada es una página web, no un enlace directo a una imagen.")
+
+    # Abrir e interpretar la imagen
+    img_bytes = io.BytesIO(resp.content)
+    img_prod = Image.open(img_bytes)
+    img_prod = img_prod.convert("RGBA")
     img_prod = img_prod.resize((800, 800))
 
     lienzo = Image.new("RGBA", (800, 920), (255, 255, 255, 255))
@@ -84,10 +96,10 @@ def generar_imagen_chollo(url_imagen, p_oferta, p_antiguo, tienda="amazon"):
     if "amazon" in nombre_tienda:
         draw.arc([35, 870, 130, 890], start=10, end=170, fill=(255, 153, 0), width=4)
 
-    # Precio Oferta (Gigante en Blanco)
+    # Precio Oferta
     draw.text((250, 820), f"{p_oferta}€", fill=(255, 255, 255), font=font_p)
 
-    # Precio Antiguo Tachado (Rojo)
+    # Precio Antiguo Tachado
     draw.text((630, 835), f"{p_antiguo}€", fill=(220, 60, 60), font=font_a)
     draw.line([(620, 855), (750, 855)], fill=(220, 60, 60), width=3)
 
@@ -97,7 +109,7 @@ def generar_imagen_chollo(url_imagen, p_oferta, p_antiguo, tienda="amazon"):
     return output
 
 # ==========================================
-# 5. PROCESAMIENTO DE MENSAJES Y FORMATO
+# 5. PROCESAMIENTO DE MENSAJES
 # ==========================================
 async def recibir_mensaje(update: Update, context: ContextTypes.DEFAULT_TYPE):
     texto = update.message.text
@@ -125,7 +137,7 @@ async def recibir_mensaje(update: Update, context: ContextTypes.DEFAULT_TYPE):
             val_antiguo = float(p_antiguo.replace(',', '.'))
             desc_pct = int(round((1 - (val_oferta / val_antiguo)) * 100))
             str_desc = f"{desc_pct}%"
-        except:
+        except Exception:
             str_desc = "OFERTA"
 
         caption = (
