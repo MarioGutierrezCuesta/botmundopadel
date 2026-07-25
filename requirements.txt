@@ -1,4 +1,5 @@
 python-telegram-bot
-pillow
+Pillow
 requests
-flask
+beautifulsoup4
+Flask
