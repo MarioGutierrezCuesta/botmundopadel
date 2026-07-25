@@ -1,9 +1,7 @@
 import os
 import io
-import re
 import threading
 import requests
-from bs4 import BeautifulSoup
 from PIL import Image, ImageDraw, ImageFont
 from flask import Flask
 from telegram import Update
@@ -30,67 +28,7 @@ def run_web():
 threading.Thread(target=run_web, daemon=True).start()
 
 # ==========================================
-# 3. EXTRACCIÓN AUTOMÁTICA DESDE AMAZON
-# ==========================================
-HEADERS = {
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-    'Accept-Language': 'es-ES,es;q=0.9,en;q=0.8',
-    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8'
-}
-
-def obtener_datos_amazon(url_afiliado):
-    """Sigue el enlace de afiliados y extrae la URL de la imagen principal y el título."""
-    session = requests.Session()
-    resp = session.get(url_afiliado.strip(), headers=HEADERS, timeout=12, allow_redirects=True)
-    resp.raise_for_status()
-
-    html = resp.text
-    soup = BeautifulSoup(html, 'html.parser')
-
-    url_foto = None
-    titulo = "Producto de Padel"
-
-    # 1. Intentar obtener la imagen principal de alta resolución desde las etiquetas de Amazon
-    img_tag = soup.find("img", {"id": "landingImage"}) or soup.find("img", {"id": "imgBlkFront"})
-    if img_tag:
-        if img_tag.get("data-old-hires"):
-            url_foto = img_tag["data-old-hires"]
-        elif img_tag.get("data-a-dynamic-image"):
-            import json
-            try:
-                dyn_dict = json.loads(img_tag["data-a-dynamic-image"])
-                url_foto = list(dyn_dict.keys())[0]  # Obtener la primera URL de la lista
-            except Exception:
-                pass
-        if not url_foto and img_tag.get("src"):
-            url_foto = img_tag["src"]
-
-    # Meta tag OpenGraph (Fallback si no encuentra la imagen del DOM)
-    if not url_foto:
-        og_img = soup.find("meta", property="og:image")
-        if og_img and og_img.get("content"):
-            url_foto = og_img["content"]
-
-    # Limpiar URL de imagen para forzar la máxima resolución si es de Amazon
-    if url_foto and "media-amazon.com" in url_foto:
-        url_foto = re.sub(r'\._AC_.*_\.', '.', url_foto)
-
-    # 2. Extraer el Título del Producto
-    title_tag = soup.find("span", {"id": "productTitle"})
-    if title_tag:
-        titulo = title_tag.text.strip()
-    else:
-        og_title = soup.find("meta", property="og:title")
-        if og_title and og_title.get("content"):
-            titulo = og_title["content"].split(":")[0].strip()
-
-    if not url_foto:
-        raise ValueError("No se pudo extraer la imagen del enlace. Comprueba que el producto esté disponible en Amazon.")
-
-    return url_foto, titulo
-
-# ==========================================
-# 4. GENERADOR DE IMAGEN (Diseño Chollo)
+# 3. GENERADOR DE IMAGEN (Diseño Chollo)
 # ==========================================
 def crear_degradado_fondo(ancho, alto):
     base = Image.new("RGBA", (ancho, alto), (255, 255, 255, 255))
@@ -109,8 +47,12 @@ def crear_degradado_fondo(ancho, alto):
     base.paste(bottom_layer, (0, 0), mask)
     return base
 
-def generar_imagen_chollo(url_imagen, p_oferta, p_antiguo, tienda="amazon", logo_canal_bytes=None):
-    resp = requests.get(url_imagen, headers=HEADERS, timeout=12)
+def generar_imagen_chollo(url_imagen, p_oferta, p_antiguo, logo_canal_bytes=None):
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept': 'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8'
+    }
+    resp = requests.get(url_imagen.strip(), headers=headers, timeout=12)
     resp.raise_for_status()
 
     img_bytes = io.BytesIO(resp.content)
@@ -168,7 +110,7 @@ def generar_imagen_chollo(url_imagen, p_oferta, p_antiguo, tienda="amazon", logo
     return output
 
 # ==========================================
-# 5. PROCESAMIENTO DE MENSAJES
+# 4. PROCESAMIENTO DE MENSAJES
 # ==========================================
 async def recibir_mensaje(update: Update, context: ContextTypes.DEFAULT_TYPE):
     texto = update.message.text
@@ -176,23 +118,20 @@ async def recibir_mensaje(update: Update, context: ContextTypes.DEFAULT_TYPE):
     linea_limpia = texto.replace('\n', ' ')
     datos = [d.strip() for d in linea_limpia.split("|") if d.strip()]
 
-    if len(datos) != 4:
+    if len(datos) != 5:
         await update.message.reply_text(
-            f"❌ **Error:** Se leyeron {len(datos)} de 4 campos.\n\n"
-            f"Envía los datos así:\n"
-            f"`ENLACE | PRECIO_OFERTA | PRECIO_ANTIGUO | DESCRIPCION`"
+            f"❌ **Error:** Se leyeron {len(datos)} de 5 campos.\n\n"
+            f"Envía la oferta así:\n"
+            f"`URL_FOTO | PRECIO_OFERTA | PRECIO_ANTIGUO | TITULO/DESCRIPCION | ENLACE_AFILIADO`"
         )
         return
 
     try:
-        enlace, p_oferta, p_antiguo, descripcion = datos
+        url_foto, p_oferta, p_antiguo, descripcion, enlace = datos
 
-        msg_espera = await update.message.reply_text("⏳ Capturando datos de Amazon y generando chollo...")
+        msg_espera = await update.message.reply_text("⏳ Generando chollo y publicando...")
 
-        # 1. Extraer foto y título automáticamente desde el enlace
-        url_foto, titulo_auto = obtener_datos_amazon(enlace)
-
-        # 2. Obtener avatar del canal para la marca de agua
+        # Obtener avatar del canal para la marca de agua
         logo_bytes = None
         try:
             chat_info = await context.bot.get_chat(CANAL_ID)
@@ -204,10 +143,10 @@ async def recibir_mensaje(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception:
             pass
 
-        # 3. Generar la imagen del chollo
-        foto_bytes = generar_imagen_chollo(url_foto, p_oferta, p_antiguo, "amazon", logo_bytes)
+        # Generar imagen
+        foto_bytes = generar_imagen_chollo(url_foto, p_oferta, p_antiguo, logo_bytes)
 
-        # 4. Calcular el % de descuento
+        # Calcular descuento
         try:
             val_oferta = float(p_oferta.replace(',', '.'))
             val_antiguo = float(p_antiguo.replace(',', '.'))
@@ -216,14 +155,12 @@ async def recibir_mensaje(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception:
             str_desc = ""
 
-        # 5. Redactar caption
         caption = (
             f"🎾 **NUEVO CHOLLAZO {str_desc}** #Publicidad\n\n"
-            f"✅ **{titulo_auto}:** {descripcion}\n\n"
+            f"✅ {descripcion}\n\n"
             f"📎 **Enlace:** {enlace}"
         )
 
-        # 6. Publicar en el canal
         await context.bot.send_photo(
             chat_id=CANAL_ID,
             photo=foto_bytes,
@@ -238,7 +175,7 @@ async def recibir_mensaje(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"❌ Error al procesar: {str(e)}")
 
 # ==========================================
-# 6. ARRANQUE DEL BOT
+# 5. ARRANQUE DEL BOT
 # ==========================================
 if __name__ == '__main__':
     app = Application.builder().token(TELEGRAM_TOKEN).build()
