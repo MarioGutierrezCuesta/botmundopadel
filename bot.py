@@ -1,6 +1,21 @@
 import os
 import io
 import requests
+import threading
+from flask import Flask
+
+# Servidor web falso para que Render no mate el proceso
+web_app = Flask('')
+
+@web_app.route('/')
+def home():
+    return "Bot de chollos activo"
+
+def run_web():
+    web_app.run(host='0.0.0.0', port=8080)
+
+threading.Thread(target=run_web).start()
+
 from PIL import Image, ImageDraw, ImageFont
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
