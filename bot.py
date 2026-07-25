@@ -62,25 +62,47 @@ def generar_imagen_chollo(url_imagen, p_oferta, p_antiguo, tienda="amazon"):
     return output
 
 async def recibir_mensaje(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # Formato esperado del mensaje:
-    # URL_FOTO | PRECIO_OFERTA | PRECIO_ANTIGUO | TIENDA | TITULO | ENLACE_AFILIADO
     try:
         texto = update.message.text
+        # Separar por el caracter |
         datos = [d.strip() for d in texto.split("|")]
         
-        url_foto, p_oferta, p_antiguo, tienda, titulo, enlace = datos
+        # Comprobar que al menos vienen los 6 datos
+        if len(datos) < 6:
+            await update.message.reply_text(
+                "❌ **Faltan datos.** Asegúrate de enviar los 6 campos separados por `|`:\n\n"
+                "`URL_FOTO | PRECIO_OFERTA | PRECIO_ANTIGUO | TIENDA | TITULO | ENLACE`"
+            )
+            return
 
-        # Crear imagen en la nube
+        url_foto = datos[0]
+        p_oferta = datos[1]
+        p_antiguo = datos[2]
+        tienda = datos[3]
+        titulo = datos[4]
+        enlace = datos[5]
+
+        # Avisar de que se está procesando
+        msg_espera = await update.message.reply_text("⏳ Generando imagen y publicando chollo...")
+
+        # Crear imagen en memoria
         foto_bytes = generar_imagen_chollo(url_foto, p_oferta, p_antiguo, tienda)
 
-        # Publicar en el canal
+        # Texto del mensaje para el canal
         caption = f"🔥 **{titulo}**\n\n💰 **Precio:** {p_oferta}€ *(Antes: {p_antiguo}€)*\n\n🛒 **Comprar aquí:** {enlace}"
+        
+        # Enviar al canal
         await context.bot.send_photo(chat_id=CANAL_ID, photo=foto_bytes, caption=caption, parse_mode="Markdown")
         
+        # Confirmación
+        await context.bot.delete_message(chat_id=update.effective_chat.id, message_id=msg_espera.message_id)
         await update.message.reply_text("✅ ¡Publicado en el canal con éxito!")
-    except Exception as e:
-        await update.message.reply_text("❌ Formato incorrecto. Envía:\n`URL_FOTO | PRECIO | ANTES | TIENDA | TITULO | LINK`")
 
+    except Exception as e:
+        await update.message.reply_text(f"❌ Error al procesar: {str(e)}")
+
+
+      
 if __name__ == '__main__':
     app = Application.builder().token(TELEGRAM_TOKEN).build()
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, recibir_mensaje))
