@@ -10,13 +10,11 @@ from telegram import Update
 from telegram.ext import Application, MessageHandler, filters, ContextTypes
 
 # ==========================================
-# 1. CONFIGURACIÓN DE TUS DATOS
+# 1. CONFIGURACIÓN TUS DATOS
 # ==========================================
-TELEGRAM_TOKEN = "8801288601:AAGjU2UNrzNurMg1XGVdL_tWjrLqIcRBWUc"
+TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN", "8801288601:AAGjU2UNrzNurMg1XGVdL_tWjrLqIcRBWUc")
+SCRAPER_API_KEY = os.environ.get("SCRAPER_API_KEY", "fc389bd2dcdb6a12d0c7d839b0d4cf58")
 CANAL_ID = "@mundopadelesp"
-
-# Pega aquí la API Key que obtuviste en ScraperAPI.com
-SCRAPER_API_KEY = "fc389bd2dcdb6a12d0c7d839b0d4cf58"
 
 # ==========================================
 # 2. SERVIDOR WEB (Para Render)
@@ -36,7 +34,9 @@ threading.Thread(target=run_web, daemon=True).start()
 # 3. EXTRACCIÓN CON SCRAPERAPI
 # ==========================================
 def obtener_datos_amazon_scraper(url_afiliado):
-    """Pasa la URL a través de ScraperAPI para esquivar bloqueos y extraer foto y título."""
+    if not SCRAPER_API_KEY:
+        raise ValueError("No se ha configurado la SCRAPER_API_KEY.")
+
     payload = {
         'api_key': SCRAPER_API_KEY,
         'url': url_afiliado.strip(),
@@ -51,7 +51,7 @@ def obtener_datos_amazon_scraper(url_afiliado):
     url_foto = None
     titulo = "Producto de Padel"
 
-    # 1. Extraer la imagen principal de alta resolución
+    # Extraer la imagen principal
     img_tag = soup.find("img", {"id": "landingImage"}) or soup.find("img", {"id": "imgBlkFront"})
     if img_tag:
         if img_tag.get("data-old-hires"):
@@ -66,17 +66,15 @@ def obtener_datos_amazon_scraper(url_afiliado):
         if not url_foto and img_tag.get("src"):
             url_foto = img_tag["src"]
 
-    # Fallback con Meta tags OpenGraph
     if not url_foto:
         og_img = soup.find("meta", property="og:image")
         if og_img and og_img.get("content"):
             url_foto = og_img["content"]
 
-    # Limpiar URL para forzar máxima resolución en fotos de Amazon
     if url_foto and "media-amazon.com" in url_foto:
         url_foto = re.sub(r'\._AC_.*_\.', '.', url_foto)
 
-    # 2. Extraer el Título del Producto
+    # Extraer el Título
     title_tag = soup.find("span", {"id": "productTitle"})
     if title_tag:
         titulo = title_tag.text.strip()
@@ -86,16 +84,16 @@ def obtener_datos_amazon_scraper(url_afiliado):
             titulo = og_title["content"].split(":")[0].strip()
 
     if not url_foto:
-        raise ValueError("No se pudo obtener la imagen del producto. Verifica que la URL de Amazon sea válida.")
+        raise ValueError("No se pudo obtener la imagen de Amazon. Revisa la URL.")
 
     return url_foto, titulo
 
 # ==========================================
-# 4. GENERADOR DE IMAGEN (Diseño Chollo)
+# 4. GENERADOR DE IMAGEN
 # ==========================================
 def crear_degradado_fondo(ancho, alto):
     base = Image.new("RGBA", (ancho, alto), (255, 255, 255, 255))
-    bottom_color = (210, 247, 220)  # Verde menta
+    bottom_color = (210, 247, 220)
     
     mask = Image.new("L", (1, alto))
     for y in range(alto):
@@ -111,9 +109,7 @@ def crear_degradado_fondo(ancho, alto):
     return base
 
 def generar_imagen_chollo(url_imagen, p_oferta, p_antiguo, logo_canal_bytes=None):
-    headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-    }
+    headers = {'User-Agent': 'Mozilla/5.0'}
     resp = requests.get(url_imagen, headers=headers, timeout=15)
     resp.raise_for_status()
 
@@ -121,7 +117,6 @@ def generar_imagen_chollo(url_imagen, p_oferta, p_antiguo, logo_canal_bytes=None
     img_prod = Image.open(img_bytes).convert("RGBA")
     
     lienzo = crear_degradado_fondo(800, 800)
-    
     img_prod.thumbnail((620, 520), Image.Resampling.LANCZOS)
     pos_x = (800 - img_prod.width) // 2
     pos_y = 60
@@ -140,21 +135,21 @@ def generar_imagen_chollo(url_imagen, p_oferta, p_antiguo, logo_canal_bytes=None
     draw.text((40, 680), "amazon", fill=(0, 0, 0), font=font_tienda)
     draw.arc([55, 725, 230, 755], start=10, end=170, fill=(255, 153, 0), width=6)
 
-    # Precio Antiguo con X roja
+    # Precio Antiguo
     txt_antiguo = f"{p_antiguo}€"
     pos_a_x, pos_a_y = 550, 580
     draw.text((pos_a_x, pos_a_y), txt_antiguo, fill=(0, 0, 0), font=font_a)
     draw.line([(pos_a_x - 10, pos_a_y + 45), (pos_a_x + 160, pos_a_y + 5)], fill=(220, 30, 30), width=7)
     draw.line([(pos_a_x - 10, pos_a_y + 5), (pos_a_x + 160, pos_a_y + 45)], fill=(220, 30, 30), width=7)
 
-    # Cápsula Naranja con Precio Rebajado
+    # Precio Oferta
     txt_oferta = f"{p_oferta}€"
     box_x1, box_y1 = 400, 660
     box_x2, box_y2 = 760, 765
     draw.rounded_rectangle([(box_x1, box_y1), (box_x2, box_y2)], radius=25, fill=(255, 115, 35))
     draw.text((box_x1 + 20, box_y1 + 10), txt_oferta, fill=(255, 255, 255), font=font_p)
 
-    # Watermark del Canal
+    # Watermark
     if logo_canal_bytes:
         try:
             logo_img = Image.open(logo_canal_bytes).convert("RGBA")
@@ -172,19 +167,17 @@ def generar_imagen_chollo(url_imagen, p_oferta, p_antiguo, logo_canal_bytes=None
     return output
 
 # ==========================================
-# 5. PROCESAMIENTO DE MENSAJES
+# 5. MANEJO DE MENSAJES (Formato 3 o 4 campos)
 # ==========================================
 async def recibir_mensaje(update: Update, context: ContextTypes.DEFAULT_TYPE):
     texto = update.message.text
-
     linea_limpia = texto.replace('\n', ' ')
     datos = [d.strip() for d in linea_limpia.split("|") if d.strip()]
 
-    # Acepta opcionalmente 4 datos (ENLACE | OFERTA | ANTIGUO | DESCRIPCION_PERSONALIZADA)
     if len(datos) < 3 or len(datos) > 4:
         await update.message.reply_text(
-            f"❌ **Formato incorrecto.**\n\n"
-            f"Envía los datos así:\n"
+            f"❌ **Formato de datos recibido incorrecto ({len(datos)} campos).**\n\n"
+            f"Envía la oferta en 4 campos (o 3 opcionales):\n"
             f"`ENLACE | PRECIO_OFERTA | PRECIO_ANTIGUO | DESCRIPCION`"
         )
         return
@@ -195,15 +188,11 @@ async def recibir_mensaje(update: Update, context: ContextTypes.DEFAULT_TYPE):
         p_antiguo = datos[2]
         desc_usuario = datos[3] if len(datos) == 4 else ""
 
-        msg_espera = await update.message.reply_text("⏳ Extrayendo datos de Amazon con ScraperAPI y creando imagen...")
+        msg_espera = await update.message.reply_text("⏳ Procesando datos con ScraperAPI y creando banner...")
 
-        # 1. Obtener imagen y título automáticamente
         url_foto, titulo_auto = obtener_datos_amazon_scraper(enlace)
-
-        # Usar la descripción del usuario o el título automático de Amazon
         texto_descripcion = desc_usuario if desc_usuario else titulo_auto
 
-        # 2. Obtener marca de agua del canal
         logo_bytes = None
         try:
             chat_info = await context.bot.get_chat(CANAL_ID)
@@ -215,10 +204,8 @@ async def recibir_mensaje(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception:
             pass
 
-        # 3. Generar la imagen con la plantilla
         foto_bytes = generar_imagen_chollo(url_foto, p_oferta, p_antiguo, logo_bytes)
 
-        # 4. Calcular % de descuento
         try:
             val_oferta = float(p_oferta.replace(',', '.'))
             val_antiguo = float(p_antiguo.replace(',', '.'))
@@ -227,7 +214,6 @@ async def recibir_mensaje(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception:
             str_desc = ""
 
-        # 5. Publicar en el canal
         caption = (
             f"🎾 **NUEVO CHOLLAZO {str_desc}** #Publicidad\n\n"
             f"✅ **{texto_descripcion}**\n\n"
@@ -242,13 +228,13 @@ async def recibir_mensaje(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
         await context.bot.delete_message(chat_id=update.effective_chat.id, message_id=msg_espera.message_id)
-        await update.message.reply_text("✅ ¡Chollo publicado en el canal con éxito!")
+        await update.message.reply_text("✅ ¡Chollo publicado con éxito!")
 
     except Exception as e:
         await update.message.reply_text(f"❌ Error al procesar: {str(e)}")
 
 # ==========================================
-# 6. ARRANQUE DEL BOT
+# 6. ARRANQUE
 # ==========================================
 if __name__ == '__main__':
     app = Application.builder().token(TELEGRAM_TOKEN).build()
