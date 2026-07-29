@@ -1,3 +1,4 @@
+
 import os
 import io
 import re
@@ -267,12 +268,13 @@ async def recibir_mensaje(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception:
             str_desc = ""
 
-        # CAPTION EN FORMATO HTML ULTRA-COMPATIBLE
+        # CAPTION CON LAS TRES FRASES CONSECUTIVAS
         caption = (
             f"🎾 <b>NUEVO CHOLLAZO {str_desc}</b> #Publicidad\n\n"
             f"✅ <b>{texto_descripcion}</b>\n\n"
             f"Sugerido por TU CANAL DE CHOLLOS @mundopadelesp\n"
-            f"TU CANAL DE VÍDEOS 👉 @mundopadelvid\n\n"
+            f"TU CANAL DE VÍDEOS 👉 @mundopadelvid\n"
+            f"INSTAGRAM @mundo_padel_esp\n\n"
             f"📎 <b>Enlace:</b> {enlace}"
         )
 
