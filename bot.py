@@ -228,9 +228,10 @@ async def recibir_mensaje(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if len(datos) < 3 or len(datos) > 4:
         await update.message.reply_text(
-            f"❌ **Formato de datos recibido incorrecto ({len(datos)} campos).**\n\n"
+            f"❌ <b>Formato de datos recibido incorrecto ({len(datos)} campos).</b>\n\n"
             f"Envía la oferta en 4 campos (o 3 opcionales):\n"
-            f"`ENLACE | PRECIO_OFERTA | PRECIO_ANTIGUO | DESCRIPCION`"
+            f"<code>ENLACE | PRECIO_OFERTA | PRECIO_ANTIGUO | DESCRIPCION</code>",
+            parse_mode="HTML"
         )
         return
 
@@ -266,20 +267,20 @@ async def recibir_mensaje(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception:
             str_desc = ""
 
-        # CAPTION EDITADO CON AMBAS FRASES EN LÍNEAS CONSECUTIVAS
+        # CAPTION EN FORMATO HTML ULTRA-COMPATIBLE
         caption = (
-            f"🎾 **NUEVO CHOLLAZO {str_desc}** #Publicidad\n\n"
-            f"✅ **{texto_descripcion}**\n\n"
+            f"🎾 <b>NUEVO CHOLLAZO {str_desc}</b> #Publicidad\n\n"
+            f"✅ <b>{texto_descripcion}</b>\n\n"
             f"Sugerido por TU CANAL DE CHOLLOS @mundopadelesp\n"
             f"TU CANAL DE VÍDEOS 👉 @mundopadelvid\n\n"
-            f"📎 **Enlace:** {enlace}"
+            f"📎 <b>Enlace:</b> {enlace}"
         )
 
         await context.bot.send_photo(
             chat_id=CANAL_ID,
             photo=foto_bytes,
             caption=caption,
-            parse_mode="Markdown"
+            parse_mode="HTML"
         )
 
         await context.bot.delete_message(chat_id=update.effective_chat.id, message_id=msg_espera.message_id)
