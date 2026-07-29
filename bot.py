@@ -271,7 +271,7 @@ async def recibir_mensaje(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"🎾 NUEVO CHOLLAZO {str_desc} #Publicidad\n\n"
             f"✅ {texto_descripcion}\n\n"
             f"Sugerido por TU CANAL DE CHOLLOS @mundopadelesp\n"
-            f"TU CANAL DE VÍDEOS 👉 @mundopadelvid\n"
+            f"TU CANAL DE VÍDEOS Y MEMES 👇 @mundopadelvid\n"
             f"INSTAGRAM @mundo_padel_esp\n\n"
             f"📎 Enlace: {enlace}"
         )
