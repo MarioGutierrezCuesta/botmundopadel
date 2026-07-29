@@ -266,10 +266,10 @@ async def recibir_mensaje(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception:
             str_desc = ""
 
-        # SE MODIFICA AQUÍ LA PLANTILLA DEL MENSAJE (CAPTION)
+        # CAPTION EDITADO CON ESPACIADO ANTES Y DESPUÉS
         caption = (
             f"🎾 **NUEVO CHOLLAZO {str_desc}** #Publicidad\n\n"
-            f"✅ **{texto_descripcion}**\n"
+            f"✅ **{texto_descripcion}**\n\n"
             f"Sugerido por TU CANAL DE CHOLLOS @mundopadelesp\n\n"
             f"📎 **Enlace:** {enlace}"
         )
