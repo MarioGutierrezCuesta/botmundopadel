@@ -32,13 +32,9 @@ def run_web():
 threading.Thread(target=run_web, daemon=True).start()
 
 # ==========================================
-# 3. EXTRACCIÓN ULTRA-ROBUSTA CON SCRAPERAPI
+# 3. EXTRACCIÓN CON SCRAPERAPI
 # ==========================================
 def descorchar_url_corta(url):
-    """
-    Sigue las redirecciones (amzn.to, etc.) para obtener la URL final limpia
-    y evitar errores de redirección en ScraperAPI.
-    """
     headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
     }
@@ -56,7 +52,6 @@ def obtener_datos_amazon_scraper(url_afiliado):
     if not SCRAPER_API_KEY:
         raise ValueError("No se ha configurado la SCRAPER_API_KEY.")
 
-    # 1. Resolver redirección previa si es enlace corto
     url_real = descorchar_url_corta(url_afiliado.strip())
 
     payload = {
@@ -73,8 +68,6 @@ def obtener_datos_amazon_scraper(url_afiliado):
     url_foto = None
     titulo = "Producto de Padel"
 
-    # MÉTODOS MÚLTIPLES PARA ENCONTRAR LA FOTO PRINCIPAL
-    # 1. Vías estándar de productos
     img_tag = (
         soup.find("img", {"id": "landingImage"}) or 
         soup.find("img", {"id": "imgBlkFront"}) or
@@ -95,13 +88,11 @@ def obtener_datos_amazon_scraper(url_afiliado):
         if not url_foto and img_tag.get("src"):
             url_foto = img_tag["src"]
 
-    # 2. Vía OpenGraph (Meta tags)
     if not url_foto:
         og_img = soup.find("meta", property="og:image") or soup.find("meta", {"name": "twitter:image"})
         if og_img and og_img.get("content"):
             url_foto = og_img["content"]
 
-    # 3. Vía JSON-LD / Scripts incrustados en Amazon
     if not url_foto:
         scripts = soup.find_all("script", type="text/javascript")
         for s in scripts:
@@ -111,7 +102,6 @@ def obtener_datos_amazon_scraper(url_afiliado):
                     url_foto = match.group(1)
                     break
 
-    # 4. Búsqueda de emergencia por servidor de imágenes de Amazon
     if not url_foto:
         all_imgs = soup.find_all("img", src=True)
         for img in all_imgs:
@@ -120,13 +110,11 @@ def obtener_datos_amazon_scraper(url_afiliado):
                 url_foto = src
                 break
 
-    # Limpiar parámetros de resolución para forzar la foto en Máxima Calidad HD
     if url_foto and "media-amazon.com" in url_foto:
         url_foto = re.sub(r'\._AC_.*_\.', '.', url_foto)
         url_foto = re.sub(r'\._SX\d+_\.', '.', url_foto)
         url_foto = re.sub(r'\._SY\d+_\.', '.', url_foto)
 
-    # EXTRACCIÓN DEL TÍTULO
     title_tag = soup.find("span", {"id": "productTitle"})
     if title_tag:
         titulo = title_tag.text.strip()
@@ -141,7 +129,7 @@ def obtener_datos_amazon_scraper(url_afiliado):
     return url_foto, titulo
 
 # ==========================================
-# 4. GENERADOR DE IMAGEN
+# 4. GENERADOR DE IMAGEN (SIN DIBUJO DE LOGO AMAZON)
 # ==========================================
 def crear_degradado_fondo(ancho, alto):
     base = Image.new("RGBA", (ancho, alto), (255, 255, 255, 255))
@@ -179,15 +167,10 @@ def generar_imagen_chollo(url_imagen, p_oferta, p_antiguo, logo_canal_bytes=None
     try:
         font_p = ImageFont.truetype("DejaVuSans-Bold.ttf", 68)
         font_a = ImageFont.truetype("DejaVuSans-Bold.ttf", 48)
-        font_tienda = ImageFont.truetype("DejaVuSans-Bold.ttf", 42)
     except Exception:
-        font_p = font_a = font_tienda = ImageFont.load_default(size=50)
+        font_p = font_a = ImageFont.load_default(size=50)
 
-    # Logo Amazon
-    draw.text((40, 680), "amazon", fill=(0, 0, 0), font=font_tienda)
-    draw.arc([55, 725, 230, 755], start=10, end=170, fill=(255, 153, 0), width=6)
-
-    # Precio Antiguo
+    # Precio Antiguo (Tachado)
     txt_antiguo = f"{p_antiguo}€"
     pos_a_x, pos_a_y = 550, 580
     draw.text((pos_a_x, pos_a_y), txt_antiguo, fill=(0, 0, 0), font=font_a)
@@ -201,7 +184,7 @@ def generar_imagen_chollo(url_imagen, p_oferta, p_antiguo, logo_canal_bytes=None
     draw.rounded_rectangle([(box_x1, box_y1), (box_x2, box_y2)], radius=25, fill=(255, 115, 35))
     draw.text((box_x1 + 20, box_y1 + 10), txt_oferta, fill=(255, 255, 255), font=font_p)
 
-    # Watermark / Logo Canal
+    # Watermark / Logo de tu Canal en la esquina superior izquierda
     if logo_canal_bytes:
         try:
             logo_img = Image.open(logo_canal_bytes).convert("RGBA")
@@ -266,12 +249,11 @@ async def recibir_mensaje(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception:
             str_desc = ""
 
-        # TEXTO COMPLETO Y DIRECTO SIN FORMATOS COMPLEJOS PARA EVITAR ERRORES
         caption = (
             f"🎾 NUEVO CHOLLAZO {str_desc} #Publicidad\n\n"
             f"✅ {texto_descripcion}\n\n"
             f"Sugerido por TU CANAL DE CHOLLOS @mundopadelesp\n"
-            f"TU CANAL DE VÍDEOS Y MEMES 👇 @mundopadelvid\n"
+            f"TU CANAL DE VÍDEOS 👉 @mundopadelvid\n"
             f"INSTAGRAM @mundo_padel_esp\n\n"
             f"📎 Enlace: {enlace}"
         )
