@@ -7,7 +7,7 @@ import requests
 from bs4 import BeautifulSoup
 from PIL import Image, ImageDraw, ImageFont
 from flask import Flask
-from telegram import Update
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, MessageHandler, filters, ContextTypes
 
 # ==========================================
@@ -253,16 +253,22 @@ async def recibir_mensaje(update: Update, context: ContextTypes.DEFAULT_TYPE):
         caption = (
             f"🎾 NUEVO CHOLLAZO {str_desc} #Publicidad\n\n"
             f"✅ {texto_descripcion}\n\n"
-            f"Sugerido por TU CANAL DE CHOLLOS @mundopadelesp\n"
-            f"TU CANAL DE VÍDEOS 👉 @mundopadelvid\n"
-            f"INSTAGRAM @mundo_padel_esp\n\n"
-            f"📎 Enlace: {enlace}"
+            f"Sugerido por TU CANAL DE CHOLLOS\n@mundopadelesp\n"
+            f"TU CANAL DE VÍDEOS 👉\n@mundopadelvid\n"
+            f"INSTAGRAM @mundo_padel_esp"
         )
+
+        # Creación del botón flotante (Inline Keyboard)
+        keyboard = [
+            [InlineKeyboardButton("🛍️ VER OFERTA EN AMAZON", url=enlace)]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
 
         await context.bot.send_photo(
             chat_id=CANAL_ID,
             photo=foto_bytes,
-            caption=caption
+            caption=caption,
+            reply_markup=reply_markup
         )
 
         await context.bot.delete_message(chat_id=update.effective_chat.id, message_id=msg_espera.message_id)
