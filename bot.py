@@ -129,7 +129,7 @@ def obtener_datos_amazon_scraper(url_afiliado):
     return url_foto, titulo
 
 # ==========================================
-# 4. GENERADOR DE IMAGEN (SIN DIBUJO DE LOGO AMAZON)
+# 4. GENERADOR DE IMAGEN (TU LOGO ABAJO A LA IZQUIERDA)
 # ==========================================
 def crear_degradado_fondo(ancho, alto):
     base = Image.new("RGBA", (ancho, alto), (255, 255, 255, 255))
@@ -184,15 +184,16 @@ def generar_imagen_chollo(url_imagen, p_oferta, p_antiguo, logo_canal_bytes=None
     draw.rounded_rectangle([(box_x1, box_y1), (box_x2, box_y2)], radius=25, fill=(255, 115, 35))
     draw.text((box_x1 + 20, box_y1 + 10), txt_oferta, fill=(255, 255, 255), font=font_p)
 
-    # Watermark / Logo de tu Canal en la esquina superior izquierda
+    # TU LOGO EN LA ESQUINA INFERIOR IZQUIERDA (Sustituyendo el de Amazon)
     if logo_canal_bytes:
         try:
             logo_img = Image.open(logo_canal_bytes).convert("RGBA")
-            logo_img = logo_img.resize((90, 90))
-            mask = Image.new('L', (90, 90), 0)
+            logo_img = logo_img.resize((100, 100)) # Tamaño destacado
+            mask = Image.new('L', (100, 100), 0)
             draw_mask = ImageDraw.Draw(mask)
-            draw_mask.ellipse((0, 0, 90, 90), fill=255)
-            lienzo.paste(logo_img, (30, 30), mask)
+            draw_mask.ellipse((0, 0, 100, 100), fill=255)
+            # Posición en x=50, y=660 (justo donde estaba el hueco inferior izquierdo)
+            lienzo.paste(logo_img, (50, 660), mask)
         except Exception:
             pass
 
