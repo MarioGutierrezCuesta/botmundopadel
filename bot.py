@@ -19,17 +19,21 @@ CANAL_ID = "@mundopadelesp"
 TU_TAG = "mundopadel09a-21" 
 
 # ==========================================
-# 2. SERVIDOR WEB (Para Render)
+# 2. SERVIDOR WEB (Para Render / Keep-Alive)
 # ==========================================
 web_app = Flask('')
 
 @web_app.route('/')
+@web_app.route('/health')
 def home():
-    return "Bot de chollos activo con ScraperAPI"
+    return "Bot de chollos activo con ScraperAPI", 200
 
 def run_web():
-    web_app.run(host='0.0.0.0', port=8080)
+    # Render asigna dinámicamente un puerto en la variable PORT (por defecto 8080)
+    port = int(os.environ.get("PORT", 8080))
+    web_app.run(host='0.0.0.0', port=port)
 
+# Arranque del servidor Flask en hilo independiente para no bloquear Telegram
 threading.Thread(target=run_web, daemon=True).start()
 
 # ==========================================
@@ -251,7 +255,7 @@ async def recibir_mensaje(update: Update, context: ContextTypes.DEFAULT_TYPE):
             val_antiguo = float(p_antiguo.replace(',', '.'))
             desc_pct = int(round((1 - (val_oferta / val_antiguo)) * 100))
             str_desc = f"-{desc_pct}%"
-        except:
+        except Exception:
             str_desc = ""
 
         caption = (
