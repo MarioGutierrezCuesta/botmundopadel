@@ -77,7 +77,7 @@ def obtener_datos_amazon_directo(url_afiliado):
     soup = BeautifulSoup(resp.text, 'html.parser')
 
     url_foto = None
-    titulo = "Producto de Padel"
+    titulo = "Producto de Pádel"
 
     # Extracción de imagen principal
     img_tag = (
@@ -115,7 +115,7 @@ def obtener_datos_amazon_directo(url_afiliado):
         titulo = title_tag.text.strip()
 
     if not url_foto:
-        raise ValueError("No se pudo extraer la foto de Amazon. Pásala como quinto campo en la plantilla.")
+        raise ValueError("No se pudo extraer la foto de Amazon de forma automática.")
 
     return url_foto, titulo
 
@@ -201,11 +201,12 @@ async def recibir_mensaje(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if len(datos) < 3 or len(datos) > 5:
         await update.message.reply_text(
-            f"❌ Formato incorrecto ({len(datos)} campos).\n"
-            f"Envía: ENLACE | PRECIO_OFERTA | PRECIO_ANTIGUO | [DESCRIPCION] | [URL_IMAGEN]"
+            f"❌ Formato incorrecto ({len(datos)} campos recabados).\n"
+            f"Estructura soportada: ENLACE | PRECIO_OFERTA | PRECIO_ANTIGUO | [DESCRIPCIÓN] | [URL_IMAGEN]"
         )
         return
 
+    msg_espera = None
     try:
         enlace_original = datos[0]
         p_oferta = datos[1]
@@ -215,18 +216,29 @@ async def recibir_mensaje(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         msg_espera = await update.message.reply_text("⏳ Procesando...")
 
-        # 1. Obtener imagen y título (Sin ScraperAPI)
+        # 1. Obtención de Imagen y Título
         if url_foto_manual:
             url_foto = url_foto_manual
             texto_descripcion = desc_usuario if desc_usuario else "Producto de Pádel"
         else:
-            url_foto, titulo_auto = obtener_datos_amazon_directo(enlace_original)
-            texto_descripcion = desc_usuario if desc_usuario else titulo_auto
+            try:
+                url_foto, titulo_auto = obtener_datos_amazon_directo(enlace_original)
+                texto_descripcion = desc_usuario if desc_usuario else titulo_auto
+            except Exception as e_scrap:
+                if msg_espera:
+                    await context.bot.delete_message(chat_id=update.effective_chat.id, message_id=msg_espera.message_id)
+                await update.message.reply_text(
+                    "⚠️ Amazon ha bloqueado la extracción de la foto para este producto.\n\n"
+                    "Por favor, vuelve a enviarlo añadiendo la URL de la imagen al final (5 campos):\n"
+                    "`ENLACE | OFERTA | ANTES | TITULO | URL_FOTO`",
+                    parse_mode="Markdown"
+                )
+                return
 
-        # 2. Convertir a enlace limpio oficial (Estructura: amazon.es/dp/ASIN?tag=...)
+        # 2. Convertir a enlace limpio oficial
         enlace_final = convertir_a_enlace_limpio(enlace_original, TU_TAG)
 
-        # 3. Logo del canal
+        # 3. Obtener Logo del canal
         logo_bytes = None
         try:
             chat_info = await context.bot.get_chat(CANAL_ID)
@@ -238,10 +250,10 @@ async def recibir_mensaje(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception:
             pass
 
-        # 4. Generar imagen
+        # 4. Generar imagen del chollo
         foto_bytes = generar_imagen_chollo(url_foto, p_oferta, p_antiguo, logo_bytes)
 
-        # 5. Calcular porcentaje de descuento
+        # 5. Porcentaje de Descuento
         try:
             val_oferta = float(p_oferta.replace(',', '.'))
             val_antiguo = float(p_antiguo.replace(',', '.'))
@@ -250,7 +262,7 @@ async def recibir_mensaje(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception:
             str_desc = ""
 
-        # 6. Texto del mensaje con coletilla obligatoria de afiliados
+        # 6. Texto del post
         caption = (
             f"🎾 NUEVO CHOLLAZO {str_desc} #Publicidad\n\n"
             f"✅ {texto_descripcion}\n\n"
@@ -260,16 +272,22 @@ async def recibir_mensaje(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"En calidad de Afiliado de Amazon, obtengo ingresos por las compras adscritas que cumplen los requisitos aplicables."
         )
 
-        # 7. Botón e integración final
+        # 7. Botón y Envío
         keyboard = [[InlineKeyboardButton("🛍️ VER OFERTA EN AMAZON", url=enlace_final)]]
         reply_markup = InlineKeyboardMarkup(keyboard)
 
         await context.bot.send_photo(chat_id=CANAL_ID, photo=foto_bytes, caption=caption, reply_markup=reply_markup)
         
-        await context.bot.delete_message(chat_id=update.effective_chat.id, message_id=msg_espera.message_id)
-        await update.message.reply_text("✅ ¡Chollo publicado de forma 100% limpia!")
+        if msg_espera:
+            await context.bot.delete_message(chat_id=update.effective_chat.id, message_id=msg_espera.message_id)
+        await update.message.reply_text("✅ ¡Chollo publicado con éxito!")
 
     except Exception as e:
+        if msg_espera:
+            try:
+                await context.bot.delete_message(chat_id=update.effective_chat.id, message_id=msg_espera.message_id)
+            except Exception:
+                pass
         await update.message.reply_text(f"❌ Error al procesar: {str(e)}")
 
 # ==========================================
