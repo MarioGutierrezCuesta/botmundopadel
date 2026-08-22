@@ -14,6 +14,7 @@ from telegram.ext import Application, MessageHandler, filters, ContextTypes
 # 1. CONFIGURACIÓN DE TUS DATOS
 # ==========================================
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN", "8801288601:AAGjU2UNrzNurMg1XGVdL_tWjrLqIcRBWUc")
+SCRAPER_API_KEY = os.environ.get("SCRAPER_API_KEY", "fc389bd2dcdb6a12d0c7d839b0d4cf58")
 CANAL_ID = "@mundopadelesp"
 TU_TAG = "mundopadel09a-21" 
 
@@ -25,7 +26,7 @@ web_app = Flask('')
 @web_app.route('/')
 @web_app.route('/health')
 def home():
-    return "Bot de chollos activo (Modo Directo - Sin ScraperAPI)", 200
+    return "Bot de chollos activo (Modo Híbrido)", 200
 
 def run_web():
     port = int(os.environ.get("PORT", 8080))
@@ -34,7 +35,7 @@ def run_web():
 threading.Thread(target=run_web, daemon=True).start()
 
 # ==========================================
-# 3. EXTRACCIÓN DIRECTA Y LIMPIEZA DE URLS
+# 3. EXTRACCIÓN HÍBRIDA (GRATIS + FALLBACK SCRAPERAPI)
 # ==========================================
 def descorchar_url_corta(url):
     if "amazon.es/dp/" in url or "amazon.es/gp/" in url:
@@ -62,24 +63,40 @@ def convertir_a_enlace_limpio(url_original, tag_afiliado):
             return f"{url_real}{separador}tag={tag_afiliado}"
         return url_real
 
-def obtener_datos_amazon_directo(url_afiliado):
+def obtener_datos_amazon_hibrido(url_afiliado):
     url_real = descorchar_url_corta(url_afiliado.strip())
+    html_content = ""
 
+    # PASO 1: Intentar extracción GRATIS directa
     headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
         'Accept-Language': 'es-ES,es;q=0.9',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
     }
-    
-    resp = requests.get(url_real, headers=headers, timeout=15)
-    resp.raise_for_status()
+    try:
+        resp = requests.get(url_real, headers=headers, timeout=10)
+        if resp.status_code == 200 and "captcha" not in resp.text.lower():
+            html_content = resp.text
+    except Exception:
+        pass
 
-    soup = BeautifulSoup(resp.text, 'html.parser')
+    # PASO 2: Usar ScraperAPI SOLO si la extracción directa falló o fue bloqueada
+    if not html_content and SCRAPER_API_KEY:
+        payload = {'api_key': SCRAPER_API_KEY, 'url': url_real, 'country_code': 'es'}
+        try:
+            resp_scraper = requests.get('http://api.scraperapi.com', params=payload, timeout=30)
+            if resp_scraper.status_code == 200:
+                html_content = resp_scraper.text
+        except Exception:
+            pass
 
+    if not html_content:
+        raise ValueError("No se pudo conectar con Amazon de ninguna forma.")
+
+    soup = BeautifulSoup(html_content, 'html.parser')
     url_foto = None
     titulo = "Producto de Pádel"
 
-    # Extracción de imagen principal
+    # Búsqueda de imagen principal
     img_tag = (
         soup.find("img", {"id": "landingImage"}) or 
         soup.find("img", {"id": "imgBlkFront"}) or
@@ -104,7 +121,7 @@ def obtener_datos_amazon_directo(url_afiliado):
         if og_img and og_img.get("content"):
             url_foto = og_img["content"]
 
-    # Optimizar calidad de imagen de Amazon
+    # Optimización de resolución de imagen
     if url_foto and "media-amazon.com" in url_foto:
         url_foto = re.sub(r'\._AC_.*_\.', '.', url_foto)
         url_foto = re.sub(r'\._SX\d+_\.', '.', url_foto)
@@ -115,7 +132,7 @@ def obtener_datos_amazon_directo(url_afiliado):
         titulo = title_tag.text.strip()
 
     if not url_foto:
-        raise ValueError("No se pudo extraer la foto de Amazon de forma automática.")
+        raise ValueError("No se pudo extraer la foto del producto.")
 
     return url_foto, titulo
 
@@ -201,8 +218,8 @@ async def recibir_mensaje(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if len(datos) < 3 or len(datos) > 5:
         await update.message.reply_text(
-            f"❌ Formato incorrecto ({len(datos)} campos recabados).\n"
-            f"Estructura soportada: ENLACE | PRECIO_OFERTA | PRECIO_ANTIGUO | [DESCRIPCIÓN] | [URL_IMAGEN]"
+            f"❌ Formato incorrecto.\n"
+            f"Envía: ENLACE | PRECIO_OFERTA | PRECIO_ANTIGUO | [DESCRIPCIÓN]"
         )
         return
 
@@ -216,29 +233,18 @@ async def recibir_mensaje(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         msg_espera = await update.message.reply_text("⏳ Procesando...")
 
-        # 1. Obtención de Imagen y Título
+        # 1. Extracción con fallback
         if url_foto_manual:
             url_foto = url_foto_manual
             texto_descripcion = desc_usuario if desc_usuario else "Producto de Pádel"
         else:
-            try:
-                url_foto, titulo_auto = obtener_datos_amazon_directo(enlace_original)
-                texto_descripcion = desc_usuario if desc_usuario else titulo_auto
-            except Exception as e_scrap:
-                if msg_espera:
-                    await context.bot.delete_message(chat_id=update.effective_chat.id, message_id=msg_espera.message_id)
-                await update.message.reply_text(
-                    "⚠️ Amazon ha bloqueado la extracción de la foto para este producto.\n\n"
-                    "Por favor, vuelve a enviarlo añadiendo la URL de la imagen al final (5 campos):\n"
-                    "`ENLACE | OFERTA | ANTES | TITULO | URL_FOTO`",
-                    parse_mode="Markdown"
-                )
-                return
+            url_foto, titulo_auto = obtener_datos_amazon_hibrido(enlace_original)
+            texto_descripcion = desc_usuario if desc_usuario else titulo_auto
 
-        # 2. Convertir a enlace limpio oficial
+        # 2. Enlace limpio
         enlace_final = convertir_a_enlace_limpio(enlace_original, TU_TAG)
 
-        # 3. Obtener Logo del canal
+        # 3. Logo del canal
         logo_bytes = None
         try:
             chat_info = await context.bot.get_chat(CANAL_ID)
@@ -250,10 +256,10 @@ async def recibir_mensaje(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception:
             pass
 
-        # 4. Generar imagen del chollo
+        # 4. Generar imagen
         foto_bytes = generar_imagen_chollo(url_foto, p_oferta, p_antiguo, logo_bytes)
 
-        # 5. Porcentaje de Descuento
+        # 5. Calcular descuento
         try:
             val_oferta = float(p_oferta.replace(',', '.'))
             val_antiguo = float(p_antiguo.replace(',', '.'))
@@ -262,7 +268,7 @@ async def recibir_mensaje(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception:
             str_desc = ""
 
-        # 6. Texto del post
+        # 6. Texto legal y formato
         caption = (
             f"🎾 NUEVO CHOLLAZO {str_desc} #Publicidad\n\n"
             f"✅ {texto_descripcion}\n\n"
@@ -272,7 +278,7 @@ async def recibir_mensaje(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"En calidad de Afiliado de Amazon, obtengo ingresos por las compras adscritas que cumplen los requisitos aplicables."
         )
 
-        # 7. Botón y Envío
+        # 7. Publicación
         keyboard = [[InlineKeyboardButton("🛍️ VER OFERTA EN AMAZON", url=enlace_final)]]
         reply_markup = InlineKeyboardMarkup(keyboard)
 
