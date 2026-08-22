@@ -14,7 +14,6 @@ from telegram.ext import Application, MessageHandler, filters, ContextTypes
 # 1. CONFIGURACIÓN DE TUS DATOS
 # ==========================================
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN", "8801288601:AAGjU2UNrzNurMg1XGVdL_tWjrLqIcRBWUc")
-SCRAPER_API_KEY = os.environ.get("SCRAPER_API_KEY", "fc389bd2dcdb6a12d0c7d839b0d4cf58")
 CANAL_ID = "@mundopadelesp"
 TU_TAG = "mundopadel09a-21" 
 
@@ -26,21 +25,18 @@ web_app = Flask('')
 @web_app.route('/')
 @web_app.route('/health')
 def home():
-    return "Bot de chollos activo con ScraperAPI", 200
+    return "Bot de chollos activo (Modo Directo - Sin ScraperAPI)", 200
 
 def run_web():
-    # Render asigna dinámicamente un puerto en la variable PORT (por defecto 8080)
     port = int(os.environ.get("PORT", 8080))
     web_app.run(host='0.0.0.0', port=port)
 
-# Arranque del servidor Flask en hilo independiente para no bloquear Telegram
 threading.Thread(target=run_web, daemon=True).start()
 
 # ==========================================
-# 3. EXTRACCIÓN CON SCRAPERAPI
+# 3. EXTRACCIÓN DIRECTA Y LIMPIEZA DE URLS
 # ==========================================
 def descorchar_url_corta(url):
-    # Si detecta que ya es una URL de producto, la devuelve tal cual
     if "amazon.es/dp/" in url or "amazon.es/gp/" in url:
         return url
     
@@ -48,25 +44,34 @@ def descorchar_url_corta(url):
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'
     }
     try:
-        # Usamos get con redirecciones activas para seguir el amzn.to hasta la URL final
         r = requests.get(url, allow_redirects=True, headers=headers, timeout=15)
         return r.url
     except Exception:
         return url
 
-def obtener_datos_amazon_scraper(url_afiliado):
-    if not SCRAPER_API_KEY:
-        raise ValueError("No se ha configurado la SCRAPER_API_KEY.")
+def convertir_a_enlace_limpio(url_original, tag_afiliado):
+    url_real = descorchar_url_corta(url_original)
+    match = re.search(r'/(?:dp|gp/product)/([A-Z0-9]{10})', url_real)
+    
+    if match:
+        asin = match.group(1)
+        return f"https://www.amazon.es/dp/{asin}?tag={tag_afiliado}"
+    else:
+        if "tag=" not in url_real:
+            separador = "&" if "?" in url_real else "?"
+            return f"{url_real}{separador}tag={tag_afiliado}"
+        return url_real
 
+def obtener_datos_amazon_directo(url_afiliado):
     url_real = descorchar_url_corta(url_afiliado.strip())
 
-    payload = {
-        'api_key': SCRAPER_API_KEY,
-        'url': url_real,
-        'country_code': 'es'
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+        'Accept-Language': 'es-ES,es;q=0.9',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
     }
     
-    resp = requests.get('http://api.scraperapi.com', params=payload, timeout=60)
+    resp = requests.get(url_real, headers=headers, timeout=15)
     resp.raise_for_status()
 
     soup = BeautifulSoup(resp.text, 'html.parser')
@@ -74,13 +79,12 @@ def obtener_datos_amazon_scraper(url_afiliado):
     url_foto = None
     titulo = "Producto de Padel"
 
-    # Intentos de extraer imagen
+    # Extracción de imagen principal
     img_tag = (
         soup.find("img", {"id": "landingImage"}) or 
         soup.find("img", {"id": "imgBlkFront"}) or
         soup.find("img", {"id": "main-image"}) or
-        soup.find("img", {"class": "a-dynamic-image"}) or
-        soup.find("img", {"id": "landingImage_0"})
+        soup.find("img", {"class": "a-dynamic-image"})
     )
 
     if img_tag:
@@ -100,15 +104,7 @@ def obtener_datos_amazon_scraper(url_afiliado):
         if og_img and og_img.get("content"):
             url_foto = og_img["content"]
 
-    if not url_foto:
-        all_imgs = soup.find_all("img", src=True)
-        for img in all_imgs:
-            src = img["src"]
-            if "media-amazon.com/images/I/" in src and not src.endswith(".gif") and "sprite" not in src and "captcha" not in src:
-                url_foto = src
-                break
-
-    # Limpieza de parámetros de URL de imagen
+    # Optimizar calidad de imagen de Amazon
     if url_foto and "media-amazon.com" in url_foto:
         url_foto = re.sub(r'\._AC_.*_\.', '.', url_foto)
         url_foto = re.sub(r'\._SX\d+_\.', '.', url_foto)
@@ -117,13 +113,9 @@ def obtener_datos_amazon_scraper(url_afiliado):
     title_tag = soup.find("span", {"id": "productTitle"})
     if title_tag:
         titulo = title_tag.text.strip()
-    else:
-        og_title = soup.find("meta", property="og:title")
-        if og_title and og_title.get("content"):
-            titulo = og_title["content"].split(":")[0].strip()
 
     if not url_foto:
-        raise ValueError("No se pudo extraer la imagen del producto.")
+        raise ValueError("No se pudo extraer la foto de Amazon. Pásala como quinto campo en la plantilla.")
 
     return url_foto, titulo
 
@@ -207,10 +199,10 @@ async def recibir_mensaje(update: Update, context: ContextTypes.DEFAULT_TYPE):
     linea_limpia = texto.replace('\n', ' ')
     datos = [d.strip() for d in linea_limpia.split("|") if d.strip()]
 
-    if len(datos) < 3 or len(datos) > 4:
+    if len(datos) < 3 or len(datos) > 5:
         await update.message.reply_text(
             f"❌ Formato incorrecto ({len(datos)} campos).\n"
-            f"Envía: ENLACE | PRECIO_OFERTA | PRECIO_ANTIGUO | DESCRIPCION"
+            f"Envía: ENLACE | PRECIO_OFERTA | PRECIO_ANTIGUO | [DESCRIPCION] | [URL_IMAGEN]"
         )
         return
 
@@ -218,21 +210,21 @@ async def recibir_mensaje(update: Update, context: ContextTypes.DEFAULT_TYPE):
         enlace_original = datos[0]
         p_oferta = datos[1]
         p_antiguo = datos[2]
-        desc_usuario = datos[3] if len(datos) == 4 else ""
+        desc_usuario = datos[3] if len(datos) >= 4 else ""
+        url_foto_manual = datos[4] if len(datos) == 5 else None
 
         msg_espera = await update.message.reply_text("⏳ Procesando...")
 
-        # 1. Obtener imagen y título
-        url_foto, titulo_auto = obtener_datos_amazon_scraper(enlace_original)
-        texto_descripcion = desc_usuario if desc_usuario else titulo_auto
+        # 1. Obtener imagen y título (Sin ScraperAPI)
+        if url_foto_manual:
+            url_foto = url_foto_manual
+            texto_descripcion = desc_usuario if desc_usuario else "Producto de Pádel"
+        else:
+            url_foto, titulo_auto = obtener_datos_amazon_directo(enlace_original)
+            texto_descripcion = desc_usuario if desc_usuario else titulo_auto
 
-        # 2. Descorchar la URL real y añadirle el tag
-        enlace_final = descorchar_url_corta(enlace_original)
-        if "tag=" not in enlace_final:
-            if "?" in enlace_final:
-                enlace_final = f"{enlace_final}&tag={TU_TAG}"
-            else:
-                enlace_final = f"{enlace_final}?tag={TU_TAG}"
+        # 2. Convertir a enlace limpio oficial (Estructura: amazon.es/dp/ASIN?tag=...)
+        enlace_final = convertir_a_enlace_limpio(enlace_original, TU_TAG)
 
         # 3. Logo del canal
         logo_bytes = None
@@ -249,7 +241,7 @@ async def recibir_mensaje(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # 4. Generar imagen
         foto_bytes = generar_imagen_chollo(url_foto, p_oferta, p_antiguo, logo_bytes)
 
-        # 5. Calcular descuento
+        # 5. Calcular porcentaje de descuento
         try:
             val_oferta = float(p_oferta.replace(',', '.'))
             val_antiguo = float(p_antiguo.replace(',', '.'))
@@ -258,22 +250,24 @@ async def recibir_mensaje(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception:
             str_desc = ""
 
+        # 6. Texto del mensaje con coletilla obligatoria de afiliados
         caption = (
             f"🎾 NUEVO CHOLLAZO {str_desc} #Publicidad\n\n"
             f"✅ {texto_descripcion}\n\n"
             f"Sugerido por TU CANAL DE CHOLLOS\n@mundopadelesp\n"
             f"TU CANAL DE VÍDEOS 👉\n@mundopadelvid\n"
-            f"INSTAGRAM @mundo_padel_esp"
+            f"INSTAGRAM @mundo_padel_esp\n\n"
+            f"En calidad de Afiliado de Amazon, obtengo ingresos por las compras adscritas que cumplen los requisitos aplicables."
         )
 
-        # 6. Enviar
+        # 7. Botón e integración final
         keyboard = [[InlineKeyboardButton("🛍️ VER OFERTA EN AMAZON", url=enlace_final)]]
         reply_markup = InlineKeyboardMarkup(keyboard)
 
         await context.bot.send_photo(chat_id=CANAL_ID, photo=foto_bytes, caption=caption, reply_markup=reply_markup)
         
         await context.bot.delete_message(chat_id=update.effective_chat.id, message_id=msg_espera.message_id)
-        await update.message.reply_text("✅ ¡Chollo publicado!")
+        await update.message.reply_text("✅ ¡Chollo publicado de forma 100% limpia!")
 
     except Exception as e:
         await update.message.reply_text(f"❌ Error al procesar: {str(e)}")
