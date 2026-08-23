@@ -16,17 +16,20 @@ from telegram.ext import Application, MessageHandler, filters, ContextTypes
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN", "8801288601:AAGjU2UNrzNurMg1XGVdL_tWjrLqIcRBWUc")
 SCRAPER_API_KEY = os.environ.get("SCRAPER_API_KEY", "fc389bd2dcdb6a12d0c7d839b0d4cf58")
 CANAL_ID = "@mundopadelesp"
-TU_TAG = "mundopadel09a-21" 
+
+# Tags de Afiliado
+TAG_AMAZON = "mundopadel09a-21" 
+TAG_TEMU = "TU_CODIGO_TEMU" # Pón aquí tu código/referral de Temu
 
 # ==========================================
-# 2. SERVIDOR WEB (Para Render / Keep-Alive)
+# 2. SERVIDOR WEB (Keep-Alive)
 # ==========================================
 web_app = Flask('')
 
 @web_app.route('/')
 @web_app.route('/health')
 def home():
-    return "Bot de chollos activo (Modo Híbrido)", 200
+    return "Bot de chollos activo (Amazon + Temu)", 200
 
 def run_web():
     port = int(os.environ.get("PORT", 8080))
@@ -35,41 +38,48 @@ def run_web():
 threading.Thread(target=run_web, daemon=True).start()
 
 # ==========================================
-# 3. EXTRACCIÓN HÍBRIDA (GRATIS + FALLBACK SCRAPERAPI)
+# 3. FUNCIONES DE EXTRACCIÓN Y TRATAMIENTO DE ENLACES
 # ==========================================
-def descorchar_url_corta(url):
-    if "amazon.es/dp/" in url or "amazon.es/gp/" in url:
-        return url
-    
-    headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'
-    }
+def descorchar_url(url):
+    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
     try:
         r = requests.get(url, allow_redirects=True, headers=headers, timeout=15)
         return r.url
     except Exception:
         return url
 
-def convertir_a_enlace_limpio(url_original, tag_afiliado):
-    url_real = descorchar_url_corta(url_original)
-    match = re.search(r'/(?:dp|gp/product)/([A-Z0-9]{10})', url_real)
+def procesar_enlace_afiliado(url_original):
+    url_real = descorchar_url(url_original.strip())
     
+    # Si es TEMU
+    if "temu.com" in url_real or "temu.to" in url_original:
+        tienda = "TEMU"
+        if "referral_code" not in url_real and TAG_TEMU != "TU_CODIGO_TEMU":
+            sep = "&" if "?" in url_real else "?"
+            url_final = f"{url_real}{sep}referral_code={TAG_TEMU}"
+        else:
+            url_final = url_real
+        return url_final, tienda
+
+    # Si es AMAZON
+    tienda = "AMAZON"
+    match = re.search(r'/(?:dp|gp/product)/([A-Z0-9]{10})', url_real)
     if match:
         asin = match.group(1)
-        return f"https://www.amazon.es/dp/{asin}?tag={tag_afiliado}"
+        url_final = f"https://www.amazon.es/dp/{asin}?tag={TAG_AMAZON}"
     else:
         if "tag=" not in url_real:
-            separador = "&" if "?" in url_real else "?"
-            return f"{url_real}{separador}tag={tag_afiliado}"
-        return url_real
+            sep = "&" if "?" in url_real else "?"
+            url_final = f"{url_real}{sep}tag={TAG_AMAZON}"
+        else:
+            url_final = url_real
+            
+    return url_final, tienda
 
-def obtener_datos_amazon_hibrido(url_afiliado):
-    url_real = descorchar_url_corta(url_afiliado.strip())
+def obtener_datos_amazon(url_real):
     html_content = ""
-
-    # PASO 1: Intentar extracción GRATIS directa
     headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
         'Accept-Language': 'es-ES,es;q=0.9',
     }
     try:
@@ -79,7 +89,6 @@ def obtener_datos_amazon_hibrido(url_afiliado):
     except Exception:
         pass
 
-    # PASO 2: Usar ScraperAPI SOLO si la extracción directa falló o fue bloqueada
     if not html_content and SCRAPER_API_KEY:
         payload = {'api_key': SCRAPER_API_KEY, 'url': url_real, 'country_code': 'es'}
         try:
@@ -90,13 +99,12 @@ def obtener_datos_amazon_hibrido(url_afiliado):
             pass
 
     if not html_content:
-        raise ValueError("No se pudo conectar con Amazon de ninguna forma.")
+        raise ValueError("No se pudo extraer la información de Amazon.")
 
     soup = BeautifulSoup(html_content, 'html.parser')
     url_foto = None
     titulo = "Producto de Pádel"
 
-    # Búsqueda de imagen principal
     img_tag = (
         soup.find("img", {"id": "landingImage"}) or 
         soup.find("img", {"id": "imgBlkFront"}) or
@@ -116,23 +124,12 @@ def obtener_datos_amazon_hibrido(url_afiliado):
         if not url_foto and img_tag.get("src"):
             url_foto = img_tag["src"]
 
-    if not url_foto:
-        og_img = soup.find("meta", property="og:image") or soup.find("meta", {"name": "twitter:image"})
-        if og_img and og_img.get("content"):
-            url_foto = og_img["content"]
-
-    # Optimización de resolución de imagen
     if url_foto and "media-amazon.com" in url_foto:
         url_foto = re.sub(r'\._AC_.*_\.', '.', url_foto)
-        url_foto = re.sub(r'\._SX\d+_\.', '.', url_foto)
-        url_foto = re.sub(r'\._SY\d+_\.', '.', url_foto)
 
     title_tag = soup.find("span", {"id": "productTitle"})
     if title_tag:
         titulo = title_tag.text.strip()
-
-    if not url_foto:
-        raise ValueError("No se pudo extraer la foto del producto.")
 
     return url_foto, titulo
 
@@ -142,13 +139,9 @@ def obtener_datos_amazon_hibrido(url_afiliado):
 def crear_degradado_fondo(ancho, alto):
     base = Image.new("RGBA", (ancho, alto), (255, 255, 255, 255))
     bottom_color = (210, 247, 220)
-    
     mask = Image.new("L", (1, alto))
     for y in range(alto):
-        if y < int(alto * 0.55):
-            val = 0
-        else:
-            val = int(255 * (y - alto * 0.55) / (alto * 0.45))
+        val = 0 if y < int(alto * 0.55) else int(255 * (y - alto * 0.55) / (alto * 0.45))
         mask.putpixel((0, y), val)
     
     mask = mask.resize((ancho, alto))
@@ -157,21 +150,16 @@ def crear_degradado_fondo(ancho, alto):
     return base
 
 def generar_imagen_chollo(url_imagen, p_oferta, p_antiguo, logo_canal_bytes=None):
-    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
+    headers = {'User-Agent': 'Mozilla/5.0'}
     resp = requests.get(url_imagen, headers=headers, timeout=15)
     resp.raise_for_status()
 
-    img_bytes = io.BytesIO(resp.content)
-    img_prod = Image.open(img_bytes).convert("RGBA")
-    
+    img_prod = Image.open(io.BytesIO(resp.content)).convert("RGBA")
     lienzo = crear_degradado_fondo(800, 800)
     img_prod.thumbnail((620, 520), Image.Resampling.LANCZOS)
-    pos_x = (800 - img_prod.width) // 2
-    pos_y = 60
-    lienzo.paste(img_prod, (pos_x, pos_y), img_prod)
+    lienzo.paste(img_prod, ((800 - img_prod.width) // 2, 60), img_prod)
 
     draw = ImageDraw.Draw(lienzo)
-
     try:
         font_p = ImageFont.truetype("DejaVuSans-Bold.ttf", 68)
         font_a = ImageFont.truetype("DejaVuSans-Bold.ttf", 48)
@@ -180,25 +168,19 @@ def generar_imagen_chollo(url_imagen, p_oferta, p_antiguo, logo_canal_bytes=None
 
     # Precio Antiguo
     txt_antiguo = f"{p_antiguo}€"
-    pos_a_x, pos_a_y = 550, 580
-    draw.text((pos_a_x, pos_a_y), txt_antiguo, fill=(0, 0, 0), font=font_a)
-    draw.line([(pos_a_x - 10, pos_a_y + 45), (pos_a_x + 160, pos_a_y + 5)], fill=(220, 30, 30), width=7)
-    draw.line([(pos_a_x - 10, pos_a_y + 5), (pos_a_x + 160, pos_a_y + 45)], fill=(220, 30, 30), width=7)
+    draw.text((550, 580), txt_antiguo, fill=(0, 0, 0), font=font_a)
+    draw.line([(540, 625), (710, 585)], fill=(220, 30, 30), width=7)
+    draw.line([(540, 585), (710, 625)], fill=(220, 30, 30), width=7)
 
     # Precio Oferta
-    txt_oferta = f"{p_oferta}€"
-    box_x1, box_y1 = 400, 660
-    box_x2, box_y2 = 760, 765
-    draw.rounded_rectangle([(box_x1, box_y1), (box_x2, box_y2)], radius=25, fill=(255, 115, 35))
-    draw.text((box_x1 + 20, box_y1 + 10), txt_oferta, fill=(255, 255, 255), font=font_p)
+    draw.rounded_rectangle([(400, 660), (760, 765)], radius=25, fill=(255, 115, 35))
+    draw.text((420, 670), f"{p_oferta}€", fill=(255, 255, 255), font=font_p)
 
     if logo_canal_bytes:
         try:
-            logo_img = Image.open(logo_canal_bytes).convert("RGBA")
-            logo_img = logo_img.resize((100, 100))
+            logo_img = Image.open(logo_canal_bytes).convert("RGBA").resize((100, 100))
             mask = Image.new('L', (100, 100), 0)
-            draw_mask = ImageDraw.Draw(mask)
-            draw_mask.ellipse((0, 0, 100, 100), fill=255)
+            ImageDraw.Draw(mask).ellipse((0, 0, 100, 100), fill=255)
             lienzo.paste(logo_img, (50, 660), mask)
         except Exception:
             pass
@@ -212,20 +194,16 @@ def generar_imagen_chollo(url_imagen, p_oferta, p_antiguo, logo_canal_bytes=None
 # 5. MANEJO DE MENSAJES
 # ==========================================
 async def recibir_mensaje(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    texto = update.message.text
-    linea_limpia = texto.replace('\n', ' ')
-    datos = [d.strip() for d in linea_limpia.split("|") if d.strip()]
+    texto = update.message.text.replace('\n', ' ')
+    datos = [d.strip() for d in texto.split("|") if d.strip()]
 
     if len(datos) < 3 or len(datos) > 5:
-        await update.message.reply_text(
-            f"❌ Formato incorrecto.\n"
-            f"Envía: ENLACE | PRECIO_OFERTA | PRECIO_ANTIGUO | [DESCRIPCIÓN]"
-        )
+        await update.message.reply_text("❌ Formato: ENLACE | OFERTA | ANTES | [TITULO] | [URL_FOTO]")
         return
 
     msg_espera = None
     try:
-        enlace_original = datos[0]
+        enlace_input = datos[0]
         p_oferta = datos[1]
         p_antiguo = datos[2]
         desc_usuario = datos[3] if len(datos) >= 4 else ""
@@ -233,18 +211,20 @@ async def recibir_mensaje(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         msg_espera = await update.message.reply_text("⏳ Procesando...")
 
-        # 1. Extracción con fallback
+        # Process link and detect store
+        enlace_final, tienda = procesar_enlace_afiliado(enlace_input)
+
+        # Extract or assign image
         if url_foto_manual:
             url_foto = url_foto_manual
-            texto_descripcion = desc_usuario if desc_usuario else "Producto de Pádel"
-        else:
-            url_foto, titulo_auto = obtener_datos_amazon_hibrido(enlace_original)
+            texto_descripcion = desc_usuario if desc_usuario else "Ofertaza de Pádel"
+        elif tienda == "AMAZON":
+            url_foto, titulo_auto = obtener_datos_amazon(enlace_final)
             texto_descripcion = desc_usuario if desc_usuario else titulo_auto
+        else: # TEMU require image URL unless passed in 5th field
+            raise ValueError("Para enlaces de Temu debes incluir la URL de la foto como 5º campo:\nENLACE | OFERTA | ANTES | TITULO | URL_FOTO")
 
-        # 2. Enlace limpio
-        enlace_final = convertir_a_enlace_limpio(enlace_original, TU_TAG)
-
-        # 3. Logo del canal
+        # Get channel logo
         logo_bytes = None
         try:
             chat_info = await context.bot.get_chat(CANAL_ID)
@@ -256,37 +236,37 @@ async def recibir_mensaje(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception:
             pass
 
-        # 4. Generar imagen
+        # Generate banner
         foto_bytes = generar_imagen_chollo(url_foto, p_oferta, p_antiguo, logo_bytes)
 
-        # 5. Calcular descuento
+        # Discount math
         try:
-            val_oferta = float(p_oferta.replace(',', '.'))
-            val_antiguo = float(p_antiguo.replace(',', '.'))
-            desc_pct = int(round((1 - (val_oferta / val_antiguo)) * 100))
-            str_desc = f"-{desc_pct}%"
+            val_o = float(p_oferta.replace(',', '.'))
+            val_a = float(p_antiguo.replace(',', '.'))
+            str_desc = f"-{int(round((1 - (val_o / val_a)) * 100))}%"
         except Exception:
             str_desc = ""
 
-        # 6. Texto legal y formato
+        # Post wording according to store
+        texto_tienda = "En calidad de Afiliado de Amazon, obtengo ingresos por las compras adscritas." if tienda == "AMAZON" else "Enlace de afiliado de Temu."
+        
         caption = (
             f"🎾 NUEVO CHOLLAZO {str_desc} #Publicidad\n\n"
             f"✅ {texto_descripcion}\n\n"
             f"Sugerido por TU CANAL DE CHOLLOS\n@mundopadelesp\n"
             f"TU CANAL DE VÍDEOS 👉\n@mundopadelvid\n"
             f"INSTAGRAM @mundo_padel_esp\n\n"
-            f"En calidad de Afiliado de Amazon, obtengo ingresos por las compras adscritas que cumplen los requisitos aplicables."
+            f"{texto_tienda}"
         )
 
-        # 7. Publicación
-        keyboard = [[InlineKeyboardButton("🛍️ VER OFERTA EN AMAZON", url=enlace_final)]]
-        reply_markup = InlineKeyboardMarkup(keyboard)
-
-        await context.bot.send_photo(chat_id=CANAL_ID, photo=foto_bytes, caption=caption, reply_markup=reply_markup)
+        boton_texto = f"🛍️ VER OFERTA EN {tienda}"
+        keyboard = [[InlineKeyboardButton(boton_texto, url=enlace_final)]]
+        
+        await context.bot.send_photo(chat_id=CANAL_ID, photo=foto_bytes, caption=caption, reply_markup=InlineKeyboardMarkup(keyboard))
         
         if msg_espera:
             await context.bot.delete_message(chat_id=update.effective_chat.id, message_id=msg_espera.message_id)
-        await update.message.reply_text("✅ ¡Chollo publicado con éxito!")
+        await update.message.reply_text(f"✅ ¡Chollo de {tienda} publicado con éxito!")
 
     except Exception as e:
         if msg_espera:
@@ -294,7 +274,7 @@ async def recibir_mensaje(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await context.bot.delete_message(chat_id=update.effective_chat.id, message_id=msg_espera.message_id)
             except Exception:
                 pass
-        await update.message.reply_text(f"❌ Error al procesar: {str(e)}")
+        await update.message.reply_text(f"❌ Error: {str(e)}")
 
 # ==========================================
 # 6. ARRANQUE
