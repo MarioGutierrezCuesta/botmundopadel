@@ -162,15 +162,28 @@ def generar_imagen_chollo(img_input_bytes, p_oferta, p_antiguo, logo_canal_bytes
     except Exception:
         font_p = font_a = ImageFont.load_default(size=50)
 
-    # Precio Antiguo tachado
-    txt_antiguo = f"{p_antiguo}€"
-    draw.text((550, 580), txt_antiguo, fill=(0, 0, 0), font=font_a)
-    draw.line([(540, 625), (710, 585)], fill=(220, 30, 30), width=7)
-    draw.line([(540, 585), (710, 625)], fill=(220, 30, 30), width=7)
+    # Validar si existe un precio antiguo real y superior
+    hay_descuento = False
+    try:
+        v_o = float(p_oferta.replace(',', '.'))
+        v_a = float(p_antiguo.replace(',', '.'))
+        if v_a > v_o:
+            hay_descuento = True
+    except Exception:
+        pass
 
-    # Precio Oferta
-    draw.rounded_rectangle([(400, 660), (760, 765)], radius=25, fill=(255, 115, 35))
-    draw.text((420, 670), f"{p_oferta}€", fill=(255, 255, 255), font=font_p)
+    # Dibujar precio antiguo tachado solo si hay descuento real
+    if hay_descuento:
+        txt_antiguo = f"{p_antiguo}€"
+        draw.text((550, 580), txt_antiguo, fill=(0, 0, 0), font=font_a)
+        draw.line([(540, 625), (710, 585)], fill=(220, 30, 30), width=7)
+        draw.line([(540, 585), (710, 625)], fill=(220, 30, 30), width=7)
+
+    # Precio Oferta / Final
+    box_x1 = 400 if hay_descuento else 250
+    box_x2 = 760 if hay_descuento else 610
+    draw.rounded_rectangle([(box_x1, 660), (box_x2, 765)], radius=25, fill=(255, 115, 35))
+    draw.text((box_x1 + 20, 670), f"{p_oferta}€", fill=(255, 255, 255), font=font_p)
 
     # Logo del canal
     if logo_canal_bytes:
@@ -178,7 +191,8 @@ def generar_imagen_chollo(img_input_bytes, p_oferta, p_antiguo, logo_canal_bytes
             logo_img = Image.open(logo_canal_bytes).convert("RGBA").resize((100, 100))
             mask = Image.new('L', (100, 100), 0)
             ImageDraw.Draw(mask).ellipse((0, 0, 100, 100), fill=255)
-            lienzo.paste(logo_img, (50, 660), mask)
+            pos_logo_x = 50 if hay_descuento else 80
+            lienzo.paste(logo_img, (pos_logo_x, 660), mask)
         except Exception:
             pass
 
@@ -191,7 +205,6 @@ def generar_imagen_chollo(img_input_bytes, p_oferta, p_antiguo, logo_canal_bytes
 # 5. LÓGICA DE PROCESAMIENTO UNIFICADA
 # ==========================================
 async def procesar_publicacion(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # Detectar si viene texto directo o foto con pie de foto
     es_foto = bool(update.message.photo)
     texto_recibido = update.message.caption if es_foto else update.message.text
 
@@ -217,16 +230,14 @@ async def procesar_publicacion(update: Update, context: ContextTypes.DEFAULT_TYP
         # Procesar enlace y detectar tienda
         enlace_final, tienda = procesar_enlace_afiliado(enlace_input)
 
-        # Obtener la imagen según la opción utilizada
+        # Obtener la imagen
         if es_foto:
-            # Opción A: Imagen adjunta directamente en Telegram
             file_photo = await context.bot.get_file(update.message.photo[-1].file_id)
             img_bytes = io.BytesIO()
             await file_photo.download_to_memory(img_bytes)
             img_bytes.seek(0)
-            texto_descripcion = desc_usuario if desc_usuario else "Ofertaza de Pádel"
+            texto_descripcion = desc_usuario if desc_usuario else "Producto de Pádel"
         else:
-            # Opción B: Modo texto tradicional
             if tienda == "AMAZON":
                 url_foto, titulo_auto = obtener_datos_amazon(enlace_final)
                 headers = {'User-Agent': 'Mozilla/5.0'}
@@ -249,22 +260,25 @@ async def procesar_publicacion(update: Update, context: ContextTypes.DEFAULT_TYP
         except Exception:
             pass
 
-        # Generar banner con la imagen obtenida
+        # Generar banner
         banner_bytes = generar_imagen_chollo(img_bytes, p_oferta, p_antiguo, logo_bytes)
 
         # Cálculo de descuento
+        str_desc = ""
         try:
             val_o = float(p_oferta.replace(',', '.'))
             val_a = float(p_antiguo.replace(',', '.'))
-            str_desc = f"-{int(round((1 - (val_o / val_a)) * 100))}%"
+            if val_a > val_o:
+                pct = int(round((1 - (val_o / val_a)) * 100))
+                str_desc = f"-{pct}%"
         except Exception:
-            str_desc = ""
+            pass
 
-        # Redacción según la tienda
+        encabezado = f"🎾 NUEVO CHOLLAZO {str_desc}" if str_desc else "🎾 NOVEDAD / DISPONIBLE"
         texto_tienda = "En calidad de Afiliado de Amazon, obtengo ingresos por las compras adscritas." if tienda == "AMAZON" else "Enlace de afiliado de Temu."
         
         caption = (
-            f"🎾 NUEVO CHOLLAZO {str_desc} #Publicidad\n\n"
+            f"{encabezado} #Publicidad\n\n"
             f"✅ {texto_descripcion}\n\n"
             f"Sugerido por TU CANAL DE CHOLLOS\n@mundopadelesp\n"
             f"TU CANAL DE VÍDEOS 👉\n@mundopadelvid\n"
@@ -279,7 +293,7 @@ async def procesar_publicacion(update: Update, context: ContextTypes.DEFAULT_TYP
         
         if msg_espera:
             await context.bot.delete_message(chat_id=update.effective_chat.id, message_id=msg_espera.message_id)
-        await update.message.reply_text(f"✅ ¡Chollo de {tienda} publicado con éxito en el canal!")
+        await update.message.reply_text(f"✅ ¡Chollo de {tienda} publicado con éxito!")
 
     except Exception as e:
         if msg_espera:
@@ -294,8 +308,5 @@ async def procesar_publicacion(update: Update, context: ContextTypes.DEFAULT_TYP
 # ==========================================
 if __name__ == '__main__':
     app = Application.builder().token(TELEGRAM_TOKEN).build()
-    
-    # Maneja tanto mensajes de texto como mensajes con fotos adjuntas
     app.add_handler(MessageHandler((filters.TEXT | filters.PHOTO) & ~filters.COMMAND, procesar_publicacion))
-    
     app.run_polling()
