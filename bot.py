@@ -19,7 +19,7 @@ CANAL_ID = "@mundopadelesp"
 
 # Tags de Afiliado
 TAG_AMAZON = "mundopadel09a-21" 
-TAG_TEMU = "TU_CODIGO_TEMU" # Pón aquí tu código/referral de Temu
+TAG_TEMU = "TU_CODIGO_TEMU"  # Reemplaza con tu código de Temu
 
 # ==========================================
 # 2. SERVIDOR WEB (Keep-Alive)
@@ -29,7 +29,7 @@ web_app = Flask('')
 @web_app.route('/')
 @web_app.route('/health')
 def home():
-    return "Bot de chollos activo (Amazon + Temu)", 200
+    return "Bot de chollos activo", 200
 
 def run_web():
     port = int(os.environ.get("PORT", 8080))
@@ -38,7 +38,7 @@ def run_web():
 threading.Thread(target=run_web, daemon=True).start()
 
 # ==========================================
-# 3. FUNCIONES DE EXTRACCIÓN Y TRATAMIENTO DE ENLACES
+# 3. TRATAMIENTO DE ENLACES Y SCRAPING
 # ==========================================
 def descorchar_url(url):
     headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
@@ -134,7 +134,7 @@ def obtener_datos_amazon(url_real):
     return url_foto, titulo
 
 # ==========================================
-# 4. GENERADOR DE IMAGEN
+# 4. GENERADOR DE BANNER
 # ==========================================
 def crear_degradado_fondo(ancho, alto):
     base = Image.new("RGBA", (ancho, alto), (255, 255, 255, 255))
@@ -149,12 +149,8 @@ def crear_degradado_fondo(ancho, alto):
     base.paste(bottom_layer, (0, 0), mask)
     return base
 
-def generar_imagen_chollo(url_imagen, p_oferta, p_antiguo, logo_canal_bytes=None):
-    headers = {'User-Agent': 'Mozilla/5.0'}
-    resp = requests.get(url_imagen, headers=headers, timeout=15)
-    resp.raise_for_status()
-
-    img_prod = Image.open(io.BytesIO(resp.content)).convert("RGBA")
+def generar_imagen_chollo(img_input_bytes, p_oferta, p_antiguo, logo_canal_bytes=None):
+    img_prod = Image.open(img_input_bytes).convert("RGBA")
     lienzo = crear_degradado_fondo(800, 800)
     img_prod.thumbnail((620, 520), Image.Resampling.LANCZOS)
     lienzo.paste(img_prod, ((800 - img_prod.width) // 2, 60), img_prod)
@@ -166,7 +162,7 @@ def generar_imagen_chollo(url_imagen, p_oferta, p_antiguo, logo_canal_bytes=None
     except Exception:
         font_p = font_a = ImageFont.load_default(size=50)
 
-    # Precio Antiguo
+    # Precio Antiguo tachado
     txt_antiguo = f"{p_antiguo}€"
     draw.text((550, 580), txt_antiguo, fill=(0, 0, 0), font=font_a)
     draw.line([(540, 625), (710, 585)], fill=(220, 30, 30), width=7)
@@ -176,6 +172,7 @@ def generar_imagen_chollo(url_imagen, p_oferta, p_antiguo, logo_canal_bytes=None
     draw.rounded_rectangle([(400, 660), (760, 765)], radius=25, fill=(255, 115, 35))
     draw.text((420, 670), f"{p_oferta}€", fill=(255, 255, 255), font=font_p)
 
+    # Logo del canal
     if logo_canal_bytes:
         try:
             logo_img = Image.open(logo_canal_bytes).convert("RGBA").resize((100, 100))
@@ -191,14 +188,21 @@ def generar_imagen_chollo(url_imagen, p_oferta, p_antiguo, logo_canal_bytes=None
     return output
 
 # ==========================================
-# 5. MANEJO DE MENSAJES
+# 5. LÓGICA DE PROCESAMIENTO UNIFICADA
 # ==========================================
-async def recibir_mensaje(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    texto = update.message.text.replace('\n', ' ')
-    datos = [d.strip() for d in texto.split("|") if d.strip()]
+async def procesar_publicacion(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # Detectar si viene texto directo o foto con pie de foto
+    es_foto = bool(update.message.photo)
+    texto_recibido = update.message.caption if es_foto else update.message.text
 
-    if len(datos) < 3 or len(datos) > 5:
-        await update.message.reply_text("❌ Formato: ENLACE | OFERTA | ANTES | [TITULO] | [URL_FOTO]")
+    if not texto_recibido:
+        return
+
+    texto_limpio = texto_recibido.replace('\n', ' ')
+    datos = [d.strip() for d in texto_limpio.split("|") if d.strip()]
+
+    if len(datos) < 3 or len(datos) > 4:
+        await update.message.reply_text("❌ Formato requerido:\n`ENLACE | OFERTA | ANTES | [TITULO]`", parse_mode="Markdown")
         return
 
     msg_espera = None
@@ -206,25 +210,34 @@ async def recibir_mensaje(update: Update, context: ContextTypes.DEFAULT_TYPE):
         enlace_input = datos[0]
         p_oferta = datos[1]
         p_antiguo = datos[2]
-        desc_usuario = datos[3] if len(datos) >= 4 else ""
-        url_foto_manual = datos[4] if len(datos) == 5 else None
+        desc_usuario = datos[3] if len(datos) == 4 else ""
 
-        msg_espera = await update.message.reply_text("⏳ Procesando...")
+        msg_espera = await update.message.reply_text("⏳ Generando publicación...")
 
-        # Process link and detect store
+        # Procesar enlace y detectar tienda
         enlace_final, tienda = procesar_enlace_afiliado(enlace_input)
 
-        # Extract or assign image
-        if url_foto_manual:
-            url_foto = url_foto_manual
+        # Obtener la imagen según la opción utilizada
+        if es_foto:
+            # Opción A: Imagen adjunta directamente en Telegram
+            file_photo = await context.bot.get_file(update.message.photo[-1].file_id)
+            img_bytes = io.BytesIO()
+            await file_photo.download_to_memory(img_bytes)
+            img_bytes.seek(0)
             texto_descripcion = desc_usuario if desc_usuario else "Ofertaza de Pádel"
-        elif tienda == "AMAZON":
-            url_foto, titulo_auto = obtener_datos_amazon(enlace_final)
-            texto_descripcion = desc_usuario if desc_usuario else titulo_auto
-        else: # TEMU require image URL unless passed in 5th field
-            raise ValueError("Para enlaces de Temu debes incluir la URL de la foto como 5º campo:\nENLACE | OFERTA | ANTES | TITULO | URL_FOTO")
+        else:
+            # Opción B: Modo texto tradicional
+            if tienda == "AMAZON":
+                url_foto, titulo_auto = obtener_datos_amazon(enlace_final)
+                headers = {'User-Agent': 'Mozilla/5.0'}
+                resp = requests.get(url_foto, headers=headers, timeout=15)
+                resp.raise_for_status()
+                img_bytes = io.BytesIO(resp.content)
+                texto_descripcion = desc_usuario if desc_usuario else titulo_auto
+            else:
+                raise ValueError("Para enlaces de Temu debes adjuntar la foto del producto en el mensaje de Telegram.")
 
-        # Get channel logo
+        # Obtener logo del canal
         logo_bytes = None
         try:
             chat_info = await context.bot.get_chat(CANAL_ID)
@@ -236,10 +249,10 @@ async def recibir_mensaje(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception:
             pass
 
-        # Generate banner
-        foto_bytes = generar_imagen_chollo(url_foto, p_oferta, p_antiguo, logo_bytes)
+        # Generar banner con la imagen obtenida
+        banner_bytes = generar_imagen_chollo(img_bytes, p_oferta, p_antiguo, logo_bytes)
 
-        # Discount math
+        # Cálculo de descuento
         try:
             val_o = float(p_oferta.replace(',', '.'))
             val_a = float(p_antiguo.replace(',', '.'))
@@ -247,7 +260,7 @@ async def recibir_mensaje(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception:
             str_desc = ""
 
-        # Post wording according to store
+        # Redacción según la tienda
         texto_tienda = "En calidad de Afiliado de Amazon, obtengo ingresos por las compras adscritas." if tienda == "AMAZON" else "Enlace de afiliado de Temu."
         
         caption = (
@@ -262,11 +275,11 @@ async def recibir_mensaje(update: Update, context: ContextTypes.DEFAULT_TYPE):
         boton_texto = f"🛍️ VER OFERTA EN {tienda}"
         keyboard = [[InlineKeyboardButton(boton_texto, url=enlace_final)]]
         
-        await context.bot.send_photo(chat_id=CANAL_ID, photo=foto_bytes, caption=caption, reply_markup=InlineKeyboardMarkup(keyboard))
+        await context.bot.send_photo(chat_id=CANAL_ID, photo=banner_bytes, caption=caption, reply_markup=InlineKeyboardMarkup(keyboard))
         
         if msg_espera:
             await context.bot.delete_message(chat_id=update.effective_chat.id, message_id=msg_espera.message_id)
-        await update.message.reply_text(f"✅ ¡Chollo de {tienda} publicado con éxito!")
+        await update.message.reply_text(f"✅ ¡Chollo de {tienda} publicado con éxito en el canal!")
 
     except Exception as e:
         if msg_espera:
@@ -277,9 +290,12 @@ async def recibir_mensaje(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"❌ Error: {str(e)}")
 
 # ==========================================
-# 6. ARRANQUE
+# 6. ARRANQUE DEL BOT
 # ==========================================
 if __name__ == '__main__':
     app = Application.builder().token(TELEGRAM_TOKEN).build()
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, recibir_mensaje))
+    
+    # Maneja tanto mensajes de texto como mensajes con fotos adjuntas
+    app.add_handler(MessageHandler((filters.TEXT | filters.PHOTO) & ~filters.COMMAND, procesar_publicacion))
+    
     app.run_polling()
