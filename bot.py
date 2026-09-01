@@ -173,7 +173,7 @@ def obtener_datos_padelmarket(url_real):
     return url_foto, titulo
 
 # ==========================================
-# 4. GENERADOR DE BANNER CON PRECIO CON CUPÓN
+# 4. GENERADOR DE BANNER CON ESTRUCTURA EXACTA DE PRECIOS
 # ==========================================
 def crear_degradado_fondo(ancho, alto):
     base = Image.new("RGBA", (ancho, alto), (255, 255, 255, 255))
@@ -207,24 +207,26 @@ def calcular_precio_final(p_oferta_str, cupon_str):
 def generar_imagen_chollo(img_input_bytes, p_oferta, p_antiguo, logo_canal_bytes=None, cupon=None):
     img_prod = Image.open(img_input_bytes).convert("RGBA")
     lienzo = crear_degradado_fondo(800, 800)
-    img_prod.thumbnail((620, 500), Image.Resampling.LANCZOS)
-    lienzo.paste(img_prod, ((800 - img_prod.width) // 2, 50), img_prod)
+    img_prod.thumbnail((620, 480), Image.Resampling.LANCZOS)
+    lienzo.paste(img_prod, ((800 - img_prod.width) // 2, 40), img_prod)
 
     draw = ImageDraw.Draw(lienzo)
     
     try:
-        font_p = ImageFont.truetype("DejaVuSans-Bold.ttf", 60)
-        font_a = ImageFont.truetype("DejaVuSans-Bold.ttf", 40)
+        font_p = ImageFont.truetype("DejaVuSans-Bold.ttf", 55)
+        font_intermedio = ImageFont.truetype("DejaVuSans-Bold.ttf", 32)
+        font_orig = ImageFont.truetype("DejaVuSans-Bold.ttf", 38)
         font_cup = ImageFont.truetype("DejaVuSans-Bold.ttf", 26)
     except Exception:
         font_p = ImageFont.load_default()
-        font_a = ImageFont.load_default()
+        font_intermedio = ImageFont.load_default()
+        font_orig = ImageFont.load_default()
         font_cup = ImageFont.load_default()
 
-    # Cálculo del precio aplicando el cupón
+    # Cálculo del precio con cupón (aplicado sobre el precio de oferta)
     v_final, p_final_str = calcular_precio_final(p_oferta, cupon)
 
-    # Dibujar la etiqueta de cupón arriba a la derecha
+    # Insignia del Cupón en la esquina superior derecha
     if cupon:
         txt_cup = f"✂️ CUPÓN: {cupon.upper()}"
         bbox = draw.textbbox((0, 0), txt_cup, font=font_cup)
@@ -234,33 +236,30 @@ def generar_imagen_chollo(img_input_bytes, p_oferta, p_antiguo, logo_canal_bytes
         draw.rounded_rectangle([(x1_cup, 30), (760, 30 + h_box)], radius=12, fill=(220, 30, 30))
         draw.text((x1_cup + 15, 38), txt_cup, fill=(255, 255, 255), font=font_cup)
 
-    # El precio tachado será el precio original antes del cupón si hay cupón, o el p_antiguo normal
-    precio_referencia_tachado = p_oferta if (cupon and v_final) else p_antiguo
+    # 1. PRECIO ORIGINAL TACHADO (ej: 59.95€)
+    if p_antiguo:
+        txt_antiguo = f"{p_antiguo}€"
+        draw.text((450, 545), txt_antiguo, fill=(100, 100, 100), font=font_orig)
+        draw.line([(440, 565), (590, 555)], fill=(220, 30, 30), width=5)
 
-    hay_descuento = False
-    try:
-        v_ref = float(precio_referencia_tachado.replace(',', '.'))
-        if v_final and v_ref > v_final:
-            hay_descuento = True
-    except Exception:
-        pass
+    # 2. PRECIO DE OFERTA INTERMEDIO (si hay cupón, muestra ej: 39.95€ aquí)
+    if cupon:
+        txt_inter = f"{p_oferta}€"
+        draw.text((450, 595), txt_inter, fill=(60, 60, 60), font=font_intermedio)
 
-    if hay_descuento:
-        txt_antiguo = f"{precio_referencia_tachado}€"
-        draw.text((450, 590), txt_antiguo, fill=(100, 100, 100), font=font_a)
-        draw.line([(440, 615), (600, 605)], fill=(220, 30, 30), width=5)
+    # 3. PRECIO FINAL EN CAJA NARANJA (tras cupón o precio directo si no hay cupón)
+    box_x1 = 430
+    box_x2 = 760
+    draw.rounded_rectangle([(box_x1, 645), (box_x2, 750)], radius=20, fill=(255, 115, 35))
+    draw.text((box_x1 + 20, 660), f"{p_final_str}€", fill=(255, 255, 255), font=font_p)
 
-    box_x1 = 430 if hay_descuento else 260
-    box_x2 = 750 if hay_descuento else 580
-    draw.rounded_rectangle([(box_x1, 650), (box_x2, 755)], radius=20, fill=(255, 115, 35))
-    draw.text((box_x1 + 25, 665), f"{p_final_str}€", fill=(255, 255, 255), font=font_p)
-
+    # Logo del canal
     if logo_canal_bytes:
         try:
             logo_img = Image.open(logo_canal_bytes).convert("RGBA").resize((110, 110))
             mask = Image.new('L', (110, 110), 0)
             ImageDraw.Draw(mask).ellipse((0, 0, 110, 110), fill=255)
-            lienzo.paste(logo_img, (50, 645), mask)
+            lienzo.paste(logo_img, (50, 640), mask)
         except Exception:
             pass
 
@@ -355,7 +354,7 @@ async def procesar_publicacion(update: Update, context: ContextTypes.DEFAULT_TYP
         
         texto_cupon = f"\n🏷️ **Aplica el cupón:** `{cupon_codigo.upper()}`\n" if cupon_codigo else ""
 
-        # TEXTO DE LA PUBLICACIÓN (SIN CANAL DE VÍDEOS NI INSTAGRAM)
+        # TEXTO DE LA PUBLICACIÓN
         caption = (
             f"{encabezado} #Publicidad\n\n"
             f"✅ {texto_descripcion}\n"
