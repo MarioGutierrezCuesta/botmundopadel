@@ -50,13 +50,11 @@ def descorchar_url(url):
         return url
 
 def procesar_enlace_afiliado(url_original):
-    # Si es un enlace acortado de Awin (tidd.ly) de PadelMarket
     if "tidd.ly" in url_original:
         return url_original.strip(), "PADELMARKET"
 
     url_real = descorchar_url(url_original.strip())
     
-    # 1. Si es PADELMARKET
     if "padelmarket.com" in url_real or "padelmarket" in url_original:
         tienda = "PADELMARKET"
         if "ref=" not in url_real:
@@ -66,7 +64,6 @@ def procesar_enlace_afiliado(url_original):
             url_final = url_real
         return url_final, tienda
 
-    # 2. Si es TEMU
     if "temu.com" in url_real or "temu.to" in url_original:
         tienda = "TEMU"
         if "referral_code" not in url_real and TAG_TEMU != "TU_CODIGO_TEMU":
@@ -76,7 +73,6 @@ def procesar_enlace_afiliado(url_original):
             url_final = url_real
         return url_final, tienda
 
-    # 3. Si es AMAZON
     tienda = "AMAZON"
     match = re.search(r'/(?:dp|gp/product)/([A-Z0-9]{10})', url_real)
     if match:
@@ -149,7 +145,6 @@ def obtener_datos_amazon(url_real):
     return url_foto, titulo
 
 def obtener_datos_padelmarket(url_real):
-    # Si viene de tidd.ly, descorchamos la URL para extraer la foto de la tienda
     url_destino = descorchar_url(url_real)
     
     headers = {
@@ -178,7 +173,7 @@ def obtener_datos_padelmarket(url_real):
     return url_foto, titulo
 
 # ==========================================
-# 4. GENERADOR DE BANNER
+# 4. GENERADOR DE BANNER CON PRECIO FINAL
 # ==========================================
 def crear_degradado_fondo(ancho, alto):
     base = Image.new("RGBA", (ancho, alto), (255, 255, 255, 255))
@@ -192,6 +187,24 @@ def crear_degradado_fondo(ancho, alto):
     bottom_layer = Image.new("RGBA", (ancho, alto), bottom_color + (255,))
     base.paste(bottom_layer, (0, 0), mask)
     return base
+
+def calcular_precio_con_cupon(p_oferta_str, cupon_str):
+    """Calcula el precio resultante al aplicar un porcentaje de cupón si se detecta un número en el código."""
+    try:
+        val_o = float(p_oferta_str.replace(',', '.'))
+        if not cupon_str:
+            return val_o, p_oferta_str
+
+        # Busca dígitos en el cupón (ej. "15EXTRA" -> 15)
+        match = re.search(r'(\d+)', cupon_str)
+        if match:
+            pct_cupon = float(match.group(1))
+            precio_final = val_o * (1 - (pct_cupon / 100.0))
+            return precio_final, f"{precio_final:.2f}".replace('.', ',')
+        
+        return val_o, p_oferta_str
+    except Exception:
+        return None, p_oferta_str
 
 def generar_imagen_chollo(img_input_bytes, p_oferta, p_antiguo, logo_canal_bytes=None, cupon=None):
     img_prod = Image.open(img_input_bytes).convert("RGBA")
@@ -210,7 +223,9 @@ def generar_imagen_chollo(img_input_bytes, p_oferta, p_antiguo, logo_canal_bytes
         font_a = ImageFont.load_default()
         font_cup = ImageFont.load_default()
 
-    # Distintivo visual del cupón
+    # Determinar si hay precio con descuento de cupón
+    v_final, p_mostrar = calcular_precio_con_cupon(p_oferta, cupon)
+
     if cupon:
         txt_cup = f"✂️ CUPÓN: {cupon.upper()}"
         bbox = draw.textbbox((0, 0), txt_cup, font=font_cup)
@@ -220,24 +235,26 @@ def generar_imagen_chollo(img_input_bytes, p_oferta, p_antiguo, logo_canal_bytes
         draw.rounded_rectangle([(x1_cup, 30), (760, 30 + h_box)], radius=12, fill=(220, 30, 30))
         draw.text((x1_cup + 15, 38), txt_cup, fill=(255, 255, 255), font=font_cup)
 
+    # Si hay cupón, se toma como precio de referencia previo el de la oferta inicial
+    precio_referencia_antiguo = p_oferta if (cupon and v_final) else p_antiguo
+
     hay_descuento = False
     try:
-        v_o = float(p_oferta.replace(',', '.'))
-        v_a = float(p_antiguo.replace(',', '.'))
-        if v_a > v_o:
+        v_a = float(precio_referencia_antiguo.replace(',', '.'))
+        if v_final and v_a > v_final:
             hay_descuento = True
     except Exception:
         pass
 
     if hay_descuento:
-        txt_antiguo = f"{p_antiguo}€"
+        txt_antiguo = f"{precio_referencia_antiguo}€"
         draw.text((450, 590), txt_antiguo, fill=(100, 100, 100), font=font_a)
         draw.line([(440, 615), (600, 605)], fill=(220, 30, 30), width=5)
 
     box_x1 = 430 if hay_descuento else 260
     box_x2 = 750 if hay_descuento else 580
     draw.rounded_rectangle([(box_x1, 650), (box_x2, 755)], radius=20, fill=(255, 115, 35))
-    draw.text((box_x1 + 25, 665), f"{p_oferta}€", fill=(255, 255, 255), font=font_p)
+    draw.text((box_x1 + 25, 665), f"{p_mostrar}€", fill=(255, 255, 255), font=font_p)
 
     if logo_canal_bytes:
         try:
@@ -281,10 +298,8 @@ async def procesar_publicacion(update: Update, context: ContextTypes.DEFAULT_TYP
 
         msg_espera = await update.message.reply_text("⏳ Generando publicación...")
 
-        # Procesar enlace y detectar tienda
         enlace_final, tienda = procesar_enlace_afiliado(enlace_input)
 
-        # Obtener la imagen
         if es_foto:
             file_photo = await context.bot.get_file(update.message.photo[-1].file_id)
             img_bytes = io.BytesIO()
@@ -308,7 +323,6 @@ async def procesar_publicacion(update: Update, context: ContextTypes.DEFAULT_TYP
             img_bytes = io.BytesIO(resp.content)
             texto_descripcion = desc_usuario if desc_usuario else titulo_auto
 
-        # Obtener logo del canal
         logo_bytes = None
         try:
             chat_info = await context.bot.get_chat(CANAL_ID)
@@ -320,16 +334,15 @@ async def procesar_publicacion(update: Update, context: ContextTypes.DEFAULT_TYP
         except Exception:
             pass
 
-        # Generar banner con cupón si existe
         banner_bytes = generar_imagen_chollo(img_bytes, p_oferta, p_antiguo, logo_bytes, cupon=cupon_codigo)
 
-        # Cálculo de descuento
+        # Cálculo global del descuento para la cabecera del mensaje
+        v_final, p_final_str = calcular_precio_con_cupon(p_oferta, cupon_codigo)
         str_desc = ""
         try:
-            val_o = float(p_oferta.replace(',', '.'))
             val_a = float(p_antiguo.replace(',', '.'))
-            if val_a > val_o:
-                pct = int(round((1 - (val_o / val_a)) * 100))
+            if v_final and val_a > v_final:
+                pct = int(round((1 - (v_final / val_a)) * 100))
                 str_desc = f"-{pct}%"
         except Exception:
             pass
@@ -349,9 +362,7 @@ async def procesar_publicacion(update: Update, context: ContextTypes.DEFAULT_TYP
             f"{encabezado} #Publicidad\n\n"
             f"✅ {texto_descripcion}\n"
             f"{texto_cupon}\n"
-            f"Sugerido por TU CANAL DE CHOLLOS\n@mundopadelesp\n"
-            f"TU CANAL DE VÍDEOS 👉\n@mundopadelvid\n"
-            f"INSTAGRAM @mundo_padel_esp\n\n"
+            f"Sugerido por TU CANAL DE CHOLLOS\n@mundopadelesp\n\n"
             f"{texto_tienda}"
         )
 
