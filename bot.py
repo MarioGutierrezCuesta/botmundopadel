@@ -19,8 +19,8 @@ CANAL_ID = "@mundopadelesp"
 
 # Tags de Afiliado
 TAG_AMAZON = "mundopadel09a-21" 
-TAG_TEMU = "TU_CODIGO_TEMU"                # Reemplaza con tu código de Temu si lo utilizas
-TAG_PADELMARKET = "24562"                   # Tu código de afiliado de PadelMarket
+TAG_TEMU = "TU_CODIGO_TEMU"
+TAG_PADELMARKET = "24562"
 
 # ==========================================
 # 2. SERVIDOR WEB (Keep-Alive para Render)
@@ -90,7 +90,7 @@ def procesar_enlace_afiliado(url_original):
 def obtener_datos_amazon(url_real):
     html_content = ""
     headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
         'Accept-Language': 'es-ES,es;q=0.9',
     }
     try:
@@ -173,7 +173,7 @@ def obtener_datos_padelmarket(url_real):
     return url_foto, titulo
 
 # ==========================================
-# 4. GENERADOR DE BANNER CON PRECIO FINAL
+# 4. GENERADOR DE BANNER CON PRECIO CON CUPÓN
 # ==========================================
 def crear_degradado_fondo(ancho, alto):
     base = Image.new("RGBA", (ancho, alto), (255, 255, 255, 255))
@@ -188,21 +188,19 @@ def crear_degradado_fondo(ancho, alto):
     base.paste(bottom_layer, (0, 0), mask)
     return base
 
-def calcular_precio_con_cupon(p_oferta_str, cupon_str):
-    """Calcula el precio resultante al aplicar un porcentaje de cupón si se detecta un número en el código."""
+def calcular_precio_final(p_oferta_str, cupon_str):
     try:
-        val_o = float(p_oferta_str.replace(',', '.'))
+        v_oferta = float(p_oferta_str.replace(',', '.'))
         if not cupon_str:
-            return val_o, p_oferta_str
-
-        # Busca dígitos en el cupón (ej. "15EXTRA" -> 15)
+            return v_oferta, f"{v_oferta:.2f}".replace('.', ',')
+        
         match = re.search(r'(\d+)', cupon_str)
         if match:
-            pct_cupon = float(match.group(1))
-            precio_final = val_o * (1 - (pct_cupon / 100.0))
-            return precio_final, f"{precio_final:.2f}".replace('.', ',')
+            pct = float(match.group(1))
+            v_final = v_oferta * (1.0 - (pct / 100.0))
+            return v_final, f"{v_final:.2f}".replace('.', ',')
         
-        return val_o, p_oferta_str
+        return v_oferta, f"{v_oferta:.2f}".replace('.', ',')
     except Exception:
         return None, p_oferta_str
 
@@ -223,9 +221,10 @@ def generar_imagen_chollo(img_input_bytes, p_oferta, p_antiguo, logo_canal_bytes
         font_a = ImageFont.load_default()
         font_cup = ImageFont.load_default()
 
-    # Determinar si hay precio con descuento de cupón
-    v_final, p_mostrar = calcular_precio_con_cupon(p_oferta, cupon)
+    # Cálculo del precio aplicando el cupón
+    v_final, p_final_str = calcular_precio_final(p_oferta, cupon)
 
+    # Dibujar la etiqueta de cupón arriba a la derecha
     if cupon:
         txt_cup = f"✂️ CUPÓN: {cupon.upper()}"
         bbox = draw.textbbox((0, 0), txt_cup, font=font_cup)
@@ -235,34 +234,33 @@ def generar_imagen_chollo(img_input_bytes, p_oferta, p_antiguo, logo_canal_bytes
         draw.rounded_rectangle([(x1_cup, 30), (760, 30 + h_box)], radius=12, fill=(220, 30, 30))
         draw.text((x1_cup + 15, 38), txt_cup, fill=(255, 255, 255), font=font_cup)
 
-    # Si hay cupón, se toma como precio de referencia previo el de la oferta inicial
-    precio_referencia_antiguo = p_oferta if (cupon and v_final) else p_antiguo
+    # El precio tachado será el precio original antes del cupón si hay cupón, o el p_antiguo normal
+    precio_referencia_tachado = p_oferta if (cupon and v_final) else p_antiguo
 
     hay_descuento = False
     try:
-        v_a = float(precio_referencia_antiguo.replace(',', '.'))
-        if v_final and v_a > v_final:
+        v_ref = float(precio_referencia_tachado.replace(',', '.'))
+        if v_final and v_ref > v_final:
             hay_descuento = True
     except Exception:
         pass
 
     if hay_descuento:
-        txt_antiguo = f"{precio_referencia_antiguo}€"
+        txt_antiguo = f"{precio_referencia_tachado}€"
         draw.text((450, 590), txt_antiguo, fill=(100, 100, 100), font=font_a)
         draw.line([(440, 615), (600, 605)], fill=(220, 30, 30), width=5)
 
     box_x1 = 430 if hay_descuento else 260
     box_x2 = 750 if hay_descuento else 580
     draw.rounded_rectangle([(box_x1, 650), (box_x2, 755)], radius=20, fill=(255, 115, 35))
-    draw.text((box_x1 + 25, 665), f"{p_mostrar}€", fill=(255, 255, 255), font=font_p)
+    draw.text((box_x1 + 25, 665), f"{p_final_str}€", fill=(255, 255, 255), font=font_p)
 
     if logo_canal_bytes:
         try:
             logo_img = Image.open(logo_canal_bytes).convert("RGBA").resize((110, 110))
             mask = Image.new('L', (110, 110), 0)
             ImageDraw.Draw(mask).ellipse((0, 0, 110, 110), fill=255)
-            pos_logo_x = 50
-            lienzo.paste(logo_img, (pos_logo_x, 645), mask)
+            lienzo.paste(logo_img, (50, 645), mask)
         except Exception:
             pass
 
@@ -336,8 +334,7 @@ async def procesar_publicacion(update: Update, context: ContextTypes.DEFAULT_TYP
 
         banner_bytes = generar_imagen_chollo(img_bytes, p_oferta, p_antiguo, logo_bytes, cupon=cupon_codigo)
 
-        # Cálculo global del descuento para la cabecera del mensaje
-        v_final, p_final_str = calcular_precio_con_cupon(p_oferta, cupon_codigo)
+        v_final, _ = calcular_precio_final(p_oferta, cupon_codigo)
         str_desc = ""
         try:
             val_a = float(p_antiguo.replace(',', '.'))
@@ -358,6 +355,7 @@ async def procesar_publicacion(update: Update, context: ContextTypes.DEFAULT_TYP
         
         texto_cupon = f"\n🏷️ **Aplica el cupón:** `{cupon_codigo.upper()}`\n" if cupon_codigo else ""
 
+        # TEXTO DE LA PUBLICACIÓN (SIN CANAL DE VÍDEOS NI INSTAGRAM)
         caption = (
             f"{encabezado} #Publicidad\n\n"
             f"✅ {texto_descripcion}\n"
