@@ -155,11 +155,9 @@ def obtener_datos_padelmarket(url_real):
 
     soup = BeautifulSoup(resp.text, 'html.parser')
     
-    # Extraer imagen principal mediante OpenGraph Meta Tag o tag <img>
     og_img = soup.find("meta", property="og:image")
     url_foto = og_img["content"] if og_img else None
 
-    # Extraer título mediante OpenGraph o <h1>
     og_title = soup.find("meta", property="og:title")
     h1_title = soup.find("h1")
     
@@ -188,7 +186,7 @@ def crear_degradado_fondo(ancho, alto):
     base.paste(bottom_layer, (0, 0), mask)
     return base
 
-def generar_imagen_chollo(img_input_bytes, p_oferta, p_antiguo, logo_canal_bytes=None):
+def generar_imagen_chollo(img_input_bytes, p_oferta, p_antiguo, logo_canal_bytes=None, cupon=None):
     img_prod = Image.open(img_input_bytes).convert("RGBA")
     lienzo = crear_degradado_fondo(800, 800)
     img_prod.thumbnail((620, 500), Image.Resampling.LANCZOS)
@@ -199,9 +197,21 @@ def generar_imagen_chollo(img_input_bytes, p_oferta, p_antiguo, logo_canal_bytes
     try:
         font_p = ImageFont.truetype("DejaVuSans-Bold.ttf", 60)
         font_a = ImageFont.truetype("DejaVuSans-Bold.ttf", 40)
+        font_cup = ImageFont.truetype("DejaVuSans-Bold.ttf", 26)
     except Exception:
         font_p = ImageFont.load_default()
         font_a = ImageFont.load_default()
+        font_cup = ImageFont.load_default()
+
+    # Dibuja distintivo de cupón si existe
+    if cupon:
+        txt_cup = f"✂️ CUPÓN: {cupon.upper()}"
+        bbox = draw.textbbox((0, 0), txt_cup, font=font_cup)
+        w_box = (bbox[2] - bbox[0]) + 30
+        h_box = (bbox[3] - bbox[1]) + 20
+        x1_cup = 760 - w_box
+        draw.rounded_rectangle([(x1_cup, 30), (760, 30 + h_box)], radius=12, fill=(220, 30, 30))
+        draw.text((x1_cup + 15, 38), txt_cup, fill=(255, 255, 255), font=font_cup)
 
     hay_descuento = False
     try:
@@ -250,8 +260,8 @@ async def procesar_publicacion(update: Update, context: ContextTypes.DEFAULT_TYP
     texto_limpio = texto_recibido.replace('\n', ' ')
     datos = [d.strip() for d in texto_limpio.split("|") if d.strip()]
 
-    if len(datos) < 3 or len(datos) > 4:
-        await update.message.reply_text("❌ Formato requerido:\n`ENLACE | OFERTA | ANTES | [TITULO]`", parse_mode="Markdown")
+    if len(datos) < 3 or len(datos) > 5:
+        await update.message.reply_text("❌ Formato requerido:\n`ENLACE | OFERTA | ANTES | [TITULO] | [CUPON_OPCIONAL]`", parse_mode="Markdown")
         return
 
     msg_espera = None
@@ -259,7 +269,8 @@ async def procesar_publicacion(update: Update, context: ContextTypes.DEFAULT_TYP
         enlace_input = datos[0]
         p_oferta = datos[1]
         p_antiguo = datos[2]
-        desc_usuario = datos[3] if len(datos) == 4 else ""
+        desc_usuario = datos[3] if len(datos) >= 4 else ""
+        cupon_codigo = datos[4] if len(datos) == 5 else None
 
         msg_espera = await update.message.reply_text("⏳ Generando publicación...")
 
@@ -302,8 +313,8 @@ async def procesar_publicacion(update: Update, context: ContextTypes.DEFAULT_TYP
         except Exception:
             pass
 
-        # Generar banner
-        banner_bytes = generar_imagen_chollo(img_bytes, p_oferta, p_antiguo, logo_bytes)
+        # Generar banner con cupón si existe
+        banner_bytes = generar_imagen_chollo(img_bytes, p_oferta, p_antiguo, logo_bytes, cupon=cupon_codigo)
 
         # Cálculo de descuento
         str_desc = ""
@@ -325,9 +336,12 @@ async def procesar_publicacion(update: Update, context: ContextTypes.DEFAULT_TYP
         else:
             texto_tienda = "Enlace de afiliado de Temu."
         
+        texto_cupon = f"\n🏷️ **Aplica el cupón:** `{cupon_codigo.upper()}`\n" if cupon_codigo else ""
+
         caption = (
             f"{encabezado} #Publicidad\n\n"
-            f"✅ {texto_descripcion}\n\n"
+            f"✅ {texto_descripcion}\n"
+            f"{texto_cupon}\n"
             f"Sugerido por TU CANAL DE CHOLLOS\n@mundopadelesp\n"
             f"TU CANAL DE VÍDEOS 👉\n@mundopadelvid\n"
             f"INSTAGRAM @mundo_padel_esp\n\n"
@@ -337,7 +351,7 @@ async def procesar_publicacion(update: Update, context: ContextTypes.DEFAULT_TYP
         boton_texto = f"🛍️ VER OFERTA EN {tienda}"
         keyboard = [[InlineKeyboardButton(boton_texto, url=enlace_final)]]
         
-        await context.bot.send_photo(chat_id=CANAL_ID, photo=banner_bytes, caption=caption, reply_markup=InlineKeyboardMarkup(keyboard))
+        await context.bot.send_photo(chat_id=CANAL_ID, photo=banner_bytes, caption=caption, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
         
         if msg_espera:
             await context.bot.delete_message(chat_id=update.effective_chat.id, message_id=msg_espera.message_id)
