@@ -50,6 +50,10 @@ def descorchar_url(url):
         return url
 
 def procesar_enlace_afiliado(url_original):
+    # Si es un enlace acortado de Awin (tidd.ly) de PadelMarket
+    if "tidd.ly" in url_original:
+        return url_original.strip(), "PADELMARKET"
+
     url_real = descorchar_url(url_original.strip())
     
     # 1. Si es PADELMARKET
@@ -145,11 +149,14 @@ def obtener_datos_amazon(url_real):
     return url_foto, titulo
 
 def obtener_datos_padelmarket(url_real):
+    # Si viene de tidd.ly, descorchamos la URL para extraer la foto de la tienda
+    url_destino = descorchar_url(url_real)
+    
     headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
         'Accept-Language': 'es-ES,es;q=0.9',
     }
-    resp = requests.get(url_real, headers=headers, timeout=15)
+    resp = requests.get(url_destino, headers=headers, timeout=15)
     if resp.status_code != 200:
         raise ValueError("No se pudo acceder a la página de PadelMarket.")
 
@@ -203,7 +210,7 @@ def generar_imagen_chollo(img_input_bytes, p_oferta, p_antiguo, logo_canal_bytes
         font_a = ImageFont.load_default()
         font_cup = ImageFont.load_default()
 
-    # Dibuja distintivo de cupón si existe
+    # Distintivo visual del cupón
     if cupon:
         txt_cup = f"✂️ CUPÓN: {cupon.upper()}"
         bbox = draw.textbbox((0, 0), txt_cup, font=font_cup)
