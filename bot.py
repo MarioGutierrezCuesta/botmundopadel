@@ -19,10 +19,11 @@ CANAL_ID = "@mundopadelesp"
 
 # Tags de Afiliado
 TAG_AMAZON = "mundopadel09a-21" 
-TAG_TEMU = "TU_CODIGO_TEMU"  # Reemplaza con tu código de Temu
+TAG_TEMU = "TU_CODIGO_TEMU"                # Reemplaza con tu código de Temu si lo utilizas
+TAG_PADELMARKET = "24562"                   # Tu código de afiliado de PadelMarket
 
 # ==========================================
-# 2. SERVIDOR WEB (Keep-Alive)
+# 2. SERVIDOR WEB (Keep-Alive para Render)
 # ==========================================
 web_app = Flask('')
 
@@ -41,7 +42,7 @@ threading.Thread(target=run_web, daemon=True).start()
 # 3. TRATAMIENTO DE ENLACES Y SCRAPING
 # ==========================================
 def descorchar_url(url):
-    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
+    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
     try:
         r = requests.get(url, allow_redirects=True, headers=headers, timeout=15)
         return r.url
@@ -51,7 +52,17 @@ def descorchar_url(url):
 def procesar_enlace_afiliado(url_original):
     url_real = descorchar_url(url_original.strip())
     
-    # Si es TEMU
+    # 1. Si es PADELMARKET
+    if "padelmarket.com" in url_real or "padelmarket" in url_original:
+        tienda = "PADELMARKET"
+        if "ref=" not in url_real:
+            sep = "&" if "?" in url_real else "?"
+            url_final = f"{url_real}{sep}ref={TAG_PADELMARKET}"
+        else:
+            url_final = url_real
+        return url_final, tienda
+
+    # 2. Si es TEMU
     if "temu.com" in url_real or "temu.to" in url_original:
         tienda = "TEMU"
         if "referral_code" not in url_real and TAG_TEMU != "TU_CODIGO_TEMU":
@@ -61,7 +72,7 @@ def procesar_enlace_afiliado(url_original):
             url_final = url_real
         return url_final, tienda
 
-    # Si es AMAZON
+    # 3. Si es AMAZON
     tienda = "AMAZON"
     match = re.search(r'/(?:dp|gp/product)/([A-Z0-9]{10})', url_real)
     if match:
@@ -79,7 +90,7 @@ def procesar_enlace_afiliado(url_original):
 def obtener_datos_amazon(url_real):
     html_content = ""
     headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
         'Accept-Language': 'es-ES,es;q=0.9',
     }
     try:
@@ -133,6 +144,34 @@ def obtener_datos_amazon(url_real):
 
     return url_foto, titulo
 
+def obtener_datos_padelmarket(url_real):
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+        'Accept-Language': 'es-ES,es;q=0.9',
+    }
+    resp = requests.get(url_real, headers=headers, timeout=15)
+    if resp.status_code != 200:
+        raise ValueError("No se pudo acceder a la página de PadelMarket.")
+
+    soup = BeautifulSoup(resp.text, 'html.parser')
+    
+    # Extraer imagen principal mediante OpenGraph Meta Tag o tag <img>
+    og_img = soup.find("meta", property="og:image")
+    url_foto = og_img["content"] if og_img else None
+
+    # Extraer título mediante OpenGraph o <h1>
+    og_title = soup.find("meta", property="og:title")
+    h1_title = soup.find("h1")
+    
+    if og_title and og_title.get("content"):
+        titulo = og_title["content"].strip()
+    elif h1_title:
+        titulo = h1_title.text.strip()
+    else:
+        titulo = "Producto PadelMarket"
+
+    return url_foto, titulo
+
 # ==========================================
 # 4. GENERADOR DE BANNER
 # ==========================================
@@ -152,17 +191,18 @@ def crear_degradado_fondo(ancho, alto):
 def generar_imagen_chollo(img_input_bytes, p_oferta, p_antiguo, logo_canal_bytes=None):
     img_prod = Image.open(img_input_bytes).convert("RGBA")
     lienzo = crear_degradado_fondo(800, 800)
-    img_prod.thumbnail((620, 520), Image.Resampling.LANCZOS)
-    lienzo.paste(img_prod, ((800 - img_prod.width) // 2, 60), img_prod)
+    img_prod.thumbnail((620, 500), Image.Resampling.LANCZOS)
+    lienzo.paste(img_prod, ((800 - img_prod.width) // 2, 50), img_prod)
 
     draw = ImageDraw.Draw(lienzo)
+    
     try:
-        font_p = ImageFont.truetype("DejaVuSans-Bold.ttf", 68)
-        font_a = ImageFont.truetype("DejaVuSans-Bold.ttf", 48)
+        font_p = ImageFont.truetype("DejaVuSans-Bold.ttf", 60)
+        font_a = ImageFont.truetype("DejaVuSans-Bold.ttf", 40)
     except Exception:
-        font_p = font_a = ImageFont.load_default(size=50)
+        font_p = ImageFont.load_default()
+        font_a = ImageFont.load_default()
 
-    # Validar si existe un precio antiguo real y superior
     hay_descuento = False
     try:
         v_o = float(p_oferta.replace(',', '.'))
@@ -172,27 +212,23 @@ def generar_imagen_chollo(img_input_bytes, p_oferta, p_antiguo, logo_canal_bytes
     except Exception:
         pass
 
-    # Dibujar precio antiguo tachado solo si hay descuento real
     if hay_descuento:
         txt_antiguo = f"{p_antiguo}€"
-        draw.text((550, 580), txt_antiguo, fill=(0, 0, 0), font=font_a)
-        draw.line([(540, 625), (710, 585)], fill=(220, 30, 30), width=7)
-        draw.line([(540, 585), (710, 625)], fill=(220, 30, 30), width=7)
+        draw.text((450, 590), txt_antiguo, fill=(100, 100, 100), font=font_a)
+        draw.line([(440, 615), (600, 605)], fill=(220, 30, 30), width=5)
 
-    # Precio Oferta / Final
-    box_x1 = 400 if hay_descuento else 250
-    box_x2 = 760 if hay_descuento else 610
-    draw.rounded_rectangle([(box_x1, 660), (box_x2, 765)], radius=25, fill=(255, 115, 35))
-    draw.text((box_x1 + 20, 670), f"{p_oferta}€", fill=(255, 255, 255), font=font_p)
+    box_x1 = 430 if hay_descuento else 260
+    box_x2 = 750 if hay_descuento else 580
+    draw.rounded_rectangle([(box_x1, 650), (box_x2, 755)], radius=20, fill=(255, 115, 35))
+    draw.text((box_x1 + 25, 665), f"{p_oferta}€", fill=(255, 255, 255), font=font_p)
 
-    # Logo del canal
     if logo_canal_bytes:
         try:
-            logo_img = Image.open(logo_canal_bytes).convert("RGBA").resize((100, 100))
-            mask = Image.new('L', (100, 100), 0)
-            ImageDraw.Draw(mask).ellipse((0, 0, 100, 100), fill=255)
-            pos_logo_x = 50 if hay_descuento else 80
-            lienzo.paste(logo_img, (pos_logo_x, 660), mask)
+            logo_img = Image.open(logo_canal_bytes).convert("RGBA").resize((110, 110))
+            mask = Image.new('L', (110, 110), 0)
+            ImageDraw.Draw(mask).ellipse((0, 0, 110, 110), fill=255)
+            pos_logo_x = 50
+            lienzo.paste(logo_img, (pos_logo_x, 645), mask)
         except Exception:
             pass
 
@@ -240,13 +276,19 @@ async def procesar_publicacion(update: Update, context: ContextTypes.DEFAULT_TYP
         else:
             if tienda == "AMAZON":
                 url_foto, titulo_auto = obtener_datos_amazon(enlace_final)
-                headers = {'User-Agent': 'Mozilla/5.0'}
-                resp = requests.get(url_foto, headers=headers, timeout=15)
-                resp.raise_for_status()
-                img_bytes = io.BytesIO(resp.content)
-                texto_descripcion = desc_usuario if desc_usuario else titulo_auto
+            elif tienda == "PADELMARKET":
+                url_foto, titulo_auto = obtener_datos_padelmarket(enlace_final)
             else:
                 raise ValueError("Para enlaces de Temu debes adjuntar la foto del producto en el mensaje de Telegram.")
+
+            if not url_foto:
+                raise ValueError(f"No se pudo obtener la imagen del producto de {tienda}.")
+            
+            headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
+            resp = requests.get(url_foto, headers=headers, timeout=15)
+            resp.raise_for_status()
+            img_bytes = io.BytesIO(resp.content)
+            texto_descripcion = desc_usuario if desc_usuario else titulo_auto
 
         # Obtener logo del canal
         logo_bytes = None
@@ -275,7 +317,13 @@ async def procesar_publicacion(update: Update, context: ContextTypes.DEFAULT_TYP
             pass
 
         encabezado = f"🎾 NUEVO CHOLLAZO {str_desc}" if str_desc else "🎾 NOVEDAD / DISPONIBLE"
-        texto_tienda = "En calidad de Afiliado de Amazon, obtengo ingresos por las compras adscritas." if tienda == "AMAZON" else "Enlace de afiliado de Temu."
+        
+        if tienda == "AMAZON":
+            texto_tienda = "En calidad de Afiliado de Amazon, obtengo ingresos por las compras adscritas."
+        elif tienda == "PADELMARKET":
+            texto_tienda = "Enlace de afiliado de PadelMarket."
+        else:
+            texto_tienda = "Enlace de afiliado de Temu."
         
         caption = (
             f"{encabezado} #Publicidad\n\n"
