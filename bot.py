@@ -45,17 +45,17 @@ def run_web():
 threading.Thread(target=run_web, daemon=True).start()
 
 # ==========================================
-# 3. CARGA DE FUENTES TIPOGRÁFICAS (CORREGIDA)
+# 3. CARGA DE FUENTES TIPOGRÁFICAS (SOPORTE EURO Y ESTILO LIMPIO)
 # ==========================================
 def cargar_fuente_gigante(tamano=100, es_bold=True):
-    nombre_archivo = "OpenSans-Bold.ttf" if es_bold else "OpenSans-Regular.ttf"
+    nombre_archivo = "Roboto-Bold.ttf" if es_bold else "Roboto-Regular.ttf"
     
-    # Descarga desde mirror directo de GitHub
+    # Descarga directa de Roboto desde el repositorio oficial de Google Fonts (Soporta símbolo € perfectamente)
     if not os.path.exists(nombre_archivo):
-        url = f"https://raw.githubusercontent.com/google/fonts/main/ofl/opensans/{nombre_archivo}"
+        url = f"https://github.com/google/fonts/raw/main/apache/roboto/static/{nombre_archivo}"
         try:
             r = requests.get(url, timeout=10)
-            if r.status_code == 200:
+            if r.status_code == 200 and len(r.content) > 10000:
                 with open(nombre_archivo, "wb") as f:
                     f.write(r.content)
         except Exception:
@@ -67,7 +67,19 @@ def cargar_fuente_gigante(tamano=100, es_bold=True):
         except Exception:
             pass
 
-    # Soporte de tamaño para versiones recientes de Pillow o fallback
+    # Fallback a fuentes de sistema Linux que incluyen el símbolo €
+    rutas_sistema = [
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf" if es_bold else "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+        "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
+        "/usr/share/fonts/truetype/freefont/FreeSansBold.ttf"
+    ]
+    for ruta in rutas_sistema:
+        if os.path.exists(ruta):
+            try:
+                return ImageFont.truetype(ruta, tamano)
+            except Exception:
+                pass
+
     try:
         return ImageFont.load_default(size=tamano)
     except TypeError:
@@ -342,7 +354,7 @@ def obtener_datos_amazon(url_real):
     return {"titulo": titulo_final, "imagen_bytes": imagen_valida_bytes}
 
 # ==========================================
-# 7. RECORTE DE MARGENES Y FONDOS
+# 7. RECORTE DE MARGENES Y DEGRADADO BLANCO A AZUL CLARO
 # ==========================================
 def recortar_espacio_blanco_seguro(img_pil):
     try:
@@ -364,25 +376,27 @@ def recortar_espacio_blanco_seguro(img_pil):
         pass
     return img_pil
 
-def crear_fondo_degradado_ejemplo(width, height):
+def crear_fondo_degradado_blanco_a_azul(width, height):
     color_blanco = (255, 255, 255)
-    color_menta = (220, 245, 235)
+    color_azul_claro = (205, 232, 255) # Azul suave en la base
     base = Image.new("RGBA", (width, height), (255, 255, 255, 255))
     draw = ImageDraw.Draw(base)
+    
+    # Blanco puro arriba (45% superior) para invisibilizar marcos de foto
     for y in range(height):
         if y < int(height * 0.45):
             r, g, b = color_blanco
         else:
             factor = (y - height * 0.45) / (height * 0.55)
-            factor = factor ** 1.3
-            r = int(color_blanco[0] + (color_menta[0] - color_blanco[0]) * factor)
-            g = int(color_blanco[1] + (color_menta[1] - color_blanco[1]) * factor)
-            b = int(color_blanco[2] + (color_menta[2] - color_blanco[2]) * factor)
+            factor = factor ** 1.2
+            r = int(color_blanco[0] + (color_azul_claro[0] - color_blanco[0]) * factor)
+            g = int(color_blanco[1] + (color_azul_claro[1] - color_blanco[1]) * factor)
+            b = int(color_blanco[2] + (color_azul_claro[2] - color_blanco[2]) * factor)
         draw.line([(0, y), (width, y)], fill=(r, g, b, 255))
     return base
 
 # ==========================================
-# 8. GENERADOR GRÁFICO (PRECIOS GIGANTES)
+# 8. GENERADOR GRÁFICO (REDISEÑO Y FIX DE SIMBOLO €)
 # ==========================================
 def generar_imagen_banner(imagen_bytes, precio_oferta, precio_antes):
     if not imagen_bytes: return None
@@ -394,10 +408,10 @@ def generar_imagen_banner(imagen_bytes, precio_oferta, precio_antes):
         return None
 
     canvas_w, canvas_h = 800, 800
-    canvas = crear_fondo_degradado_ejemplo(canvas_w, canvas_h)
+    canvas = crear_fondo_degradado_blanco_a_azul(canvas_w, canvas_h)
 
-    # Ajuste de producto para dejar espacio a los precios grandes abajo
-    max_w, max_h = 680, 440
+    # Posicionamiento del producto en la parte superior blanca
+    max_w, max_h = 680, 450
     img_producto.thumbnail((max_w, max_h), Image.Resampling.LANCZOS)
     x_pos = (canvas_w - img_producto.width) // 2
     y_pos = (450 - img_producto.height) // 2 + 10
@@ -405,6 +419,7 @@ def generar_imagen_banner(imagen_bytes, precio_oferta, precio_antes):
 
     draw = ImageDraw.Draw(canvas)
 
+    # Marcador de Logo de Marca en la esquina inferior izquierda
     if os.path.exists(LOGO_PATH):
         try:
             logo = Image.open(LOGO_PATH).convert("RGBA")
@@ -412,43 +427,51 @@ def generar_imagen_banner(imagen_bytes, precio_oferta, precio_antes):
             mask = Image.new('L', logo.size, 0)
             draw_mask = ImageDraw.Draw(mask)
             draw_mask.ellipse((0, 0, logo.size[0], logo.size[1]), fill=255)
-            draw.ellipse((30, 660, 30 + logo.size[0] + 8, 660 + logo.size[1] + 8), fill=(255, 255, 255, 255), outline=(210, 225, 220, 255), width=2)
+            draw.ellipse((30, 660, 30 + logo.size[0] + 8, 660 + logo.size[1] + 8), fill=(255, 255, 255, 255), outline=(200, 220, 240, 255), width=2)
             canvas.paste(logo, (34, 664), mask)
         except Exception:
             pass
 
-    # Carga de fuentes con tamaños muy destacados
-    font_oferta = cargar_fuente_gigante(tamano=110, es_bold=True)
-    font_antes = cargar_fuente_gigante(tamano=65, es_bold=False)
+    # Carga de tipografía limpia (Roboto)
+    font_oferta = cargar_fuente_gigante(tamano=90, es_bold=True)
+    font_antes = cargar_fuente_gigante(tamano=58, es_bold=True)
 
-    # Precio original (Tachado en rojo)
+    # Formateo asegurando codificación UTF-8 para el símbolo €
+    str_euro = "€"
+
+    # Precio original tachado en rojo
     if precio_antes:
-        texto_antes = f"{precio_antes}€"
+        p_ant_limpio = str(precio_antes).replace('€', '').strip()
+        texto_antes = f"{p_ant_limpio}{str_euro}"
         bbox_ant = draw.textbbox((0, 0), texto_antes, font=font_antes)
         w_ant = bbox_ant[2] - bbox_ant[0]
         h_ant = bbox_ant[3] - bbox_ant[1]
         x_ant = (canvas_w - w_ant) // 2
         y_ant = 490
-        draw.text((x_ant, y_ant), texto_antes, fill=(200, 30, 30, 255), font=font_antes)
         
-        line_y = y_ant + (h_ant // 2) + 4
-        draw.line([(x_ant - 15, line_y), (x_ant + w_ant + 15, line_y)], fill=(200, 30, 30, 255), width=8)
+        draw.text((x_ant, y_ant), texto_antes, fill=(205, 32, 32, 255), font=font_antes)
+        
+        line_y = y_ant + (h_ant // 2) + 3
+        draw.line([(x_ant - 14, line_y), (x_ant + w_ant + 14, line_y)], fill=(205, 32, 32, 255), width=7)
 
-    # Precio oferta (Enorme en pastilla naranja)
+    # Precio en oferta destacado dentro de una caja con bordes redondeados
     if precio_oferta:
-        texto_oferta = f"{precio_oferta}€"
+        p_of_limpio = str(precio_oferta).replace('€', '').strip()
+        texto_oferta = f"{p_of_limpio}{str_euro}"
         bbox_of = draw.textbbox((0, 0), texto_oferta, font=font_oferta)
         w_of = bbox_of[2] - bbox_of[0]
         h_of = bbox_of[3] - bbox_of[1]
         
-        pad_x, pad_y = 50, 20
+        pad_x, pad_y = 48, 16
         rect_w = w_of + (pad_x * 2)
         rect_h = h_of + (pad_y * 2)
         
         rect_x = (canvas_w - rect_w) // 2
-        rect_y = 600
+        rect_y = 595
         
-        draw.rounded_rectangle([rect_x, rect_y, rect_x + rect_w, rect_y + rect_h], radius=28, fill=(255, 102, 0, 255))
+        # Pastilla en tono naranja brillante idéntica a la imagen de referencia
+        draw.rounded_rectangle([rect_x, rect_y, rect_x + rect_w, rect_y + rect_h], radius=24, fill=(255, 90, 0, 255))
+        
         text_x = rect_x + pad_x - bbox_of[0]
         text_y = rect_y + pad_y - bbox_of[1]
         draw.text((text_x, text_y), texto_oferta, fill=(255, 255, 255, 255), font=font_oferta)
@@ -510,8 +533,8 @@ async def procesar_mensaje(update: Update, context: ContextTypes.DEFAULT_TYPE):
     dto_str = ""
     if precio_oferta and precio_antes:
         try:
-            p_of = float(precio_oferta.replace(',', '.'))
-            p_ant = float(precio_antes.replace(',', '.'))
+            p_of = float(precio_oferta.replace(',', '.').replace('€', '').strip())
+            p_ant = float(precio_antes.replace(',', '.').replace('€', '').strip())
             if p_ant > p_of:
                 descuento = round(((p_ant - p_of) / p_ant) * 100)
                 dto_str = f" -{descuento}%"
