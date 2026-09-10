@@ -28,7 +28,7 @@ CJ_AID_PADELNUESTRO = os.environ.get("CJ_AID", "17306895")
 LOGO_PATH = "logo.png"
 
 # ==========================================
-# 2. SERVIDOR WEB (Keep-Alive para Render)
+# 2. SERVIDOR WEB (Keep-Alive)
 # ==========================================
 web_app = Flask('')
 
@@ -44,7 +44,32 @@ def run_web():
 threading.Thread(target=run_web, daemon=True).start()
 
 # ==========================================
-# 3. TRATAMIENTO DE ENLACES Y AFILIACIÓN
+# 3. GESTIÓN DE FUENTES TIPOGRÁFICAS (DESCARGA AUTOMÁTICA)
+# ==========================================
+def obtener_fuente(es_bold=False, tamano=40):
+    """Descarga e instala en memoria fuentes Roboto si no existen en el sistema"""
+    nombre_archivo = "Roboto-Bold.ttf" if es_bold else "Roboto-Regular.ttf"
+    url_fuente = f"https://github.com/google/fonts/raw/main/apache/roboto/{nombre_archivo}"
+    
+    if not os.path.exists(nombre_archivo):
+        try:
+            r = requests.get(url_fuente, timeout=10)
+            if r.status_code == 200:
+                with open(nombre_archivo, "wb") as f:
+                    f.write(r.content)
+        except Exception:
+            pass
+            
+    if os.path.exists(nombre_archivo):
+        try:
+            return ImageFont.truetype(nombre_archivo, tamano)
+        except Exception:
+            pass
+            
+    return ImageFont.load_default()
+
+# ==========================================
+# 4. TRATAMIENTO DE ENLACES Y AFILIACIÓN
 # ==========================================
 def descorchar_url(url):
     headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
@@ -114,13 +139,10 @@ def procesar_enlace_afiliado(url_original):
     return url_final, tienda, url_real
 
 # ==========================================
-# 4. SCRAPERS DIRECTOS
+# 5. SCRAPERS DIRECTOS
 # ==========================================
 def obtener_datos_padelmarket(url_real):
-    headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-        'Accept-Language': 'es-ES,es;q=0.9'
-    }
+    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
     try:
         resp = requests.get(url_real, headers=headers, timeout=12)
         if resp.status_code == 200:
@@ -136,10 +158,7 @@ def obtener_datos_padelmarket(url_real):
     return None
 
 def obtener_datos_padelnuestro(url_real):
-    headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-        'Accept-Language': 'es-ES,es;q=0.9'
-    }
+    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
     try:
         resp = requests.get(url_real, headers=headers, timeout=12)
         if resp.status_code == 200:
@@ -156,10 +175,7 @@ def obtener_datos_padelnuestro(url_real):
 
 def obtener_datos_amazon(url_real):
     html_content = ""
-    headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-        'Accept-Language': 'es-ES,es;q=0.9',
-    }
+    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
     try:
         resp = requests.get(url_real, headers=headers, timeout=10)
         if resp.status_code == 200 and "captcha" not in resp.text.lower():
@@ -187,21 +203,13 @@ def obtener_datos_amazon(url_real):
     return None
 
 # ==========================================
-# 5. RECORTE POR COMPARACIÓN DE FONDO
+# 6. GENERADOR GRÁFICO (RÉPLICA EXACTA DE LA IMAGEN DE MUESTRA)
 # ==========================================
-def recortar_fondo_automatico(img):
-    """Detecta el color de la esquina superior izquierda y recorta todo lo que sea igual a ese color"""
+def recortar_bordes_blancos(img):
     img_rgb = img.convert("RGB")
-    color_fondo = img_rgb.getpixel((0, 0)) # Muestra de la esquina
-    
-    bg = Image.new("RGB", img_rgb.size, color_fondo)
-    diff = ImageChops.difference(img_rgb, bg)
-    
-    # Convertir diferencia a escala de grises y aplicar tolerancia
-    diff = diff.convert("L")
-    threshold = 15 # Tolerancia para tonos casi idénticos
-    mask = diff.point(lambda p: 255 if p > threshold else 0)
-    
+    bg = Image.new("RGB", img_rgb.size, (255, 255, 255))
+    diff = ImageChops.difference(img_rgb, bg).convert("L")
+    mask = diff.point(lambda p: 255 if p > 15 else 0)
     bbox = mask.getbbox()
     if bbox:
         return img.crop(bbox)
@@ -214,75 +222,71 @@ def generar_imagen_banner(imagen_url, precio_oferta, precio_antes):
     except Exception:
         return None
 
-    # 1. Recortar bordes vacíos comparando contra el color de la esquina
-    img_producto = recortar_fondo_automatico(img_producto)
+    img_producto = recortar_bordes_blancos(img_producto)
 
-    # Canvas final (800x650)
-    canvas_w, canvas_h = 800, 650
+    # Canvas de formato Cuadrado/Vertical (700x700 px)
+    canvas_w, canvas_h = 700, 700
     canvas = Image.new("RGBA", (canvas_w, canvas_h), (255, 255, 255, 255))
 
-    # 2. Redimensionar para llenar el ancho (720px max)
-    max_w = 720
-    max_h = 400
+    # 1. Ajuste del producto centrado
+    max_w = 540
+    max_h = 420
     img_producto.thumbnail((max_w, max_h), Image.Resampling.LANCZOS)
-
-    # Colocar centrado
     x_pos = (canvas_w - img_producto.width) // 2
-    y_pos = (420 - img_producto.height) // 2 + 10
+    y_pos = (450 - img_producto.height) // 2 + 10
     canvas.paste(img_producto, (x_pos, y_pos), img_producto)
 
-    # 3. Logo
+    # 2. Logo en la esquina inferior izquierda
     if os.path.exists(LOGO_PATH):
         try:
             logo = Image.open(LOGO_PATH).convert("RGBA")
-            logo.thumbnail((90, 90))
-            canvas.paste(logo, (30, 530), logo)
+            logo.thumbnail((110, 110))
+            canvas.paste(logo, (40, 550), logo)
         except Exception:
             pass
 
     draw = ImageDraw.Draw(canvas)
-    
-    try:
-        font_oferta = ImageFont.truetype("arialbd.ttf", 64)
-        font_antes = ImageFont.truetype("arial.ttf", 40)
-    except IOError:
-        font_oferta = ImageFont.load_default()
-        font_antes = ImageFont.load_default()
 
-    y_cursor = 440
+    # Carga de fuentes garantizada
+    font_oferta = obtener_fuente(es_bold=True, tamano=52)
+    font_antes = obtener_fuente(es_bold=False, tamano=36)
 
-    # 4. Precio Antes (Tachado en Rojo)
+    # 3. Precio Anterior Tachado (Centrado)
     if precio_antes:
         texto_antes = f"{precio_antes}€"
-        bbox = draw.textbbox((0, 0), texto_antes, font=font_antes)
-        w_text = bbox[2] - bbox[0]
-        h_text = bbox[3] - bbox[1]
-        x_text = (canvas_w - w_text) // 2
+        bbox_ant = draw.textbbox((0, 0), texto_antes, font=font_antes)
+        w_ant = bbox_ant[2] - bbox_ant[0]
+        h_ant = bbox_ant[3] - bbox_ant[1]
+        x_ant = (canvas_w - w_ant) // 2
+        y_ant = 475
 
-        draw.text((x_text, y_cursor), texto_antes, fill=(210, 40, 40, 255), font=font_antes)
-        line_y = y_cursor + (h_text // 2) + 8
-        draw.line([(x_text - 8, line_y), (x_text + w_text + 8, line_y)], fill=(210, 40, 40, 255), width=5)
-        y_cursor += 55
+        draw.text((x_ant, y_ant), texto_antes, fill=(180, 50, 50, 255), font=font_antes)
+        line_y = y_ant + (h_ant // 2) + 4
+        draw.line([(x_ant - 10, line_y), (x_ant + w_ant + 10, line_y)], fill=(180, 50, 50, 255), width=4)
 
-    # 5. Botón Naranja de Oferta
+    # 4. Botón Naranja de Oferta (Derecha)
     if precio_oferta:
         texto_oferta = f"{precio_oferta}€"
         bbox_of = draw.textbbox((0, 0), texto_oferta, font=font_oferta)
         w_of = bbox_of[2] - bbox_of[0]
         h_of = bbox_of[3] - bbox_of[1]
 
-        padding_x, padding_y = 50, 14
-        rect_w = w_of + (padding_x * 2)
-        rect_h = h_of + (padding_y * 2)
+        pad_x, pad_y = 35, 14
+        rect_w = w_of + (pad_x * 2)
+        rect_h = h_of + (pad_y * 2)
 
-        rect_x = (canvas_w - rect_w) // 2
-        rect_y = y_cursor
+        # Posicionado a la derecha alineado con la base del logo
+        rect_x = canvas_w - rect_w - 40
+        rect_y = 555
 
-        draw.rounded_rectangle([rect_x, rect_y, rect_x + rect_w, rect_y + rect_h], radius=18, fill=(255, 102, 0, 255))
-        
-        text_x = rect_x + padding_x - bbox_of[0]
-        text_y = rect_y + padding_y - bbox_of[1]
-        
+        draw.rounded_rectangle(
+            [rect_x, rect_y, rect_x + rect_w, rect_y + rect_h],
+            radius=18,
+            fill=(255, 102, 0, 255)
+        )
+
+        text_x = rect_x + pad_x - bbox_of[0]
+        text_y = rect_y + pad_y - bbox_of[1]
         draw.text((text_x, text_y), texto_oferta, fill=(255, 255, 255, 255), font=font_oferta)
 
     output = io.BytesIO()
@@ -291,7 +295,7 @@ def generar_imagen_banner(imagen_url, precio_oferta, precio_antes):
     return output
 
 # ==========================================
-# 6. MANEJADOR Y PUBLICADOR DE TELEGRAM
+# 7. MANEJADOR Y PUBLICADOR DE TELEGRAM
 # ==========================================
 async def procesar_mensaje(update: Update, context: ContextTypes.DEFAULT_TYPE):
     texto = update.message.text
