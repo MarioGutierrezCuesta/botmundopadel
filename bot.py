@@ -57,7 +57,6 @@ def descorchar_url(url):
 def procesar_enlace_afiliado(url_original):
     cj_domains = ["anrdoezrs.net", "dpbolvw.net", "tkqlhce.com", "jdoqocy.com", "kqzyfj.com"]
     
-    # Si viene directamente un enlace ya formateado de CJ
     if any(domain in url_original for domain in cj_domains):
         match_url = re.search(r'url=([^&]+)', url_original)
         if match_url:
@@ -72,7 +71,6 @@ def procesar_enlace_afiliado(url_original):
 
     url_real = descorchar_url(url_original.strip())
     
-    # PadelNuestro (vía CJ Affiliate)
     if "padelnuestro.com" in url_real or "padelnuestro" in url_original:
         tienda = "PADELNUESTRO"
         if f"click-{CJ_PID}" not in url_real and CJ_PID != "TU_CJ_PID":
@@ -82,7 +80,6 @@ def procesar_enlace_afiliado(url_original):
             url_final = url_real
         return url_final, tienda, url_real
 
-    # PadelMarket
     if "padelmarket.com" in url_real or "padelmarket" in url_original:
         tienda = "PADELMARKET"
         if "ref=" not in url_real:
@@ -92,7 +89,6 @@ def procesar_enlace_afiliado(url_original):
             url_final = url_real
         return url_final, tienda, url_real
 
-    # Temu
     if "temu.com" in url_real or "temu.to" in url_original:
         tienda = "TEMU"
         if "referral_code" not in url_real and TAG_TEMU != "TU_CODIGO_TEMU":
@@ -102,7 +98,6 @@ def procesar_enlace_afiliado(url_original):
             url_final = url_real
         return url_final, tienda, url_real
 
-    # Amazon (Default)
     tienda = "AMAZON"
     match = re.search(r'/(?:dp|gp/product)/([A-Z0-9]{10})', url_real)
     if match:
@@ -170,21 +165,20 @@ def obtener_datos_amazon(url_real):
     return None
 
 # ==========================================
-# 4. MANEJADOR DE MENSAJES DE TELEGRAM
+# 4. MANEJADOR DE MENSAJES Y FORMATO
 # ==========================================
 async def procesar_mensaje(update: Update, context: ContextTypes.DEFAULT_TYPE):
     texto = update.message.text
     if not texto:
         return
 
-    # Desglosar si viene con el formato: URL | PRECIO_OFERTA | PRECIO_ANTES | TITULO
+    # Estructura de entrada: URL | PRECIO_OFERTA | PRECIO_ANTES | TITULO
     partes = [p.strip() for p in texto.split('|')]
     url_input = partes[0]
     precio_oferta = partes[1] if len(partes) > 1 else None
     precio_antes = partes[2] if len(partes) > 2 else None
     titulo_manual = partes[3] if len(partes) > 3 else None
 
-    # Extraer URL del primer segmento
     urls = re.findall(r'https?://[^\s]+', url_input)
     if not urls:
         await update.message.reply_text("❌ No se encontró ninguna URL válida en el mensaje.")
@@ -193,31 +187,43 @@ async def procesar_mensaje(update: Update, context: ContextTypes.DEFAULT_TYPE):
     url_original = urls[0]
     url_afiliado, tienda, url_scraping = procesar_enlace_afiliado(url_original)
 
-    # Scrapear imagen/título si no se pasa manual
     datos = None
     if tienda == "PADELNUESTRO":
         datos = obtener_datos_padelnuestro(url_scraping)
     elif tienda == "AMAZON":
         datos = obtener_datos_amazon(url_scraping)
 
-    titulo_final = titulo_manual or (datos.get("titulo") if datos else "Oferta Padel")
+    titulo_final = titulo_manual or (datos.get("titulo") if datos else "Producto Padel")
     imagen_url = datos.get("imagen_url") if datos else None
 
-    # Formatear el texto de publicación del canal
-    caption = f"🔥 **{titulo_final}**\n\n"
-    if precio_oferta:
-        caption += f"💰 **Precio:** {precio_oferta}€"
-        if precio_antes:
-            caption += f" ~({precio_antes}€)~"
-        caption += "\n\n"
-    caption += f"🛒 **Tienda:** {tienda}\n"
-    caption += f"🔗 **Enlace:** {url_afiliado}"
+    # Cálculo del porcentaje de descuento
+    dto_str = ""
+    if precio_oferta and precio_antes:
+        try:
+            p_of = float(precio_oferta.replace(',', '.'))
+            p_ant = float(precio_antes.replace(',', '.'))
+            if p_ant > p_of:
+                descuento = round(((p_ant - p_of) / p_ant) * 100)
+                dto_str = f" -{descuento}%"
+        except ValueError:
+            pass
 
-    # Crear botón inline para la oferta
-    keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("🔥 VER CHOLLO", url=url_afiliado)]])
+    # Texto con el formato de la captura
+    caption = f"🎾 NUEVO CHOLLAZO{dto_str} #Publicidad\n\n"
+    caption += f"✅ {titulo_final}\n\n"
+    caption += f"Sugerido por TU CANAL DE CHOLLOS\n{CANAL_ID}\n\n"
+
+    # Legal / Declaración de Afiliados
+    if tienda == "AMAZON":
+        caption += "En calidad de Afiliado de Amazon, obtengo ingresos por las compras adscritas."
+    else:
+        caption += f"En calidad de Afiliado de {tienda}, obtengo ingresos por las compras adscritas."
+
+    # Botón dinámico
+    texto_boton = f"🛍️ VER OFERTA EN {tienda}"
+    keyboard = InlineKeyboardMarkup([[InlineKeyboardButton(texto_boton, url=url_afiliado)]])
 
     try:
-        # Enviar al canal oficial
         if imagen_url:
             await context.bot.send_photo(
                 chat_id=CANAL_ID,
@@ -237,7 +243,7 @@ async def procesar_mensaje(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
         await update.message.reply_text(f"✅ ¡Chollo de **{tienda}** publicado con éxito en {CANAL_ID}!")
     except Exception as e:
-        await update.message.reply_text(f"❌ Error al publicar en el canal: {str(e)}\nAsegúrate de que el Bot sea Administrador en {CANAL_ID}.")
+        await update.message.reply_text(f"❌ Error al publicar en el canal: {str(e)}")
 
 def main():
     application = Application.builder().token(TELEGRAM_TOKEN).build()
