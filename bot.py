@@ -149,7 +149,7 @@ def procesar_enlace_afiliado(url_original):
 def es_imagen_valida_producto(url, bytes_img):
     url_lower = url.lower()
     
-    # Palabras prohibidas (métodos de pago, logos, iconos)
+    # Palabras prohibidas (métodos de pago, logos, iconos, footers)
     palabras_prohibidas = [
         'payment', 'pago', 'visa', 'mastercard', 'paypal', 'sequra', 
         'american', 'express', 'logo', 'icon', 'banner', 'footer', 
@@ -166,12 +166,12 @@ def es_imagen_valida_producto(url, bytes_img):
         if w < 200 or h < 200:
             return False
 
-        # Ratio de aspecto (descartar banners horizontales muy anchos de pago)
+        # Ratio de aspecto (descartar banners horizontales anchos de pago)
         ratio = w / float(h)
         if ratio > 1.8 or ratio < 0.4:
             return False
 
-        # Desviación estándar de color (descartar imágenes grises/blancas planas)
+        # Desviación estándar de color
         stat = ImageStat.Stat(img)
         desviacion_std = sum(stat.stddev) / len(stat.stddev)
         if desviacion_std < 15:
@@ -332,30 +332,32 @@ def obtener_datos_amazon(url_real):
     return None
 
 # ==========================================
-# 7. GENERADOR GRÁFICO (DEGRADADO MARCADO)
+# 7. GENERADOR GRÁFICO (DEGRADADO BLANCO A MENTA)
 # ==========================================
-def recortar_bordes_blancos(img):
-    img_rgb = img.convert("RGB")
-    bg = Image.new("RGB", img_rgb.size, (255, 255, 255))
-    diff = ImageChops.difference(img_rgb, bg).convert("L")
-    mask = diff.point(lambda p: 255 if p > 15 else 0)
-    bbox = mask.getbbox()
-    if bbox:
-        return img.crop(bbox)
-    return img
-
-def crear_fondo_degradado_marcado(width, height):
-    color_inicio = (255, 255, 255)
-    color_fin = (160, 174, 192)
+def crear_fondo_degradado_ejemplo(width, height):
+    """
+    Mantiene la mitad superior totalmente blanca (#FFFFFF) para disimular 
+    los recuadros blancos de los JPGs de producto, y pasa a un tono 
+    verde/menta suave en la parte inferior.
+    """
+    color_blanco = (255, 255, 255)
+    color_menta = (220, 245, 235)
     
     base = Image.new("RGBA", (width, height), (255, 255, 255, 255))
     draw = ImageDraw.Draw(base)
+    
     for y in range(height):
-        factor = (y / height) ** 1.2
-        r = int(color_inicio[0] + (color_fin[0] - color_inicio[0]) * factor)
-        g = int(color_inicio[1] + (color_fin[1] - color_inicio[1]) * factor)
-        b = int(color_inicio[2] + (color_fin[2] - color_inicio[2]) * factor)
+        if y < int(height * 0.45):
+            r, g, b = color_blanco
+        else:
+            factor = (y - height * 0.45) / (height * 0.55)
+            factor = factor ** 1.3
+            r = int(color_blanco[0] + (color_menta[0] - color_blanco[0]) * factor)
+            g = int(color_blanco[1] + (color_menta[1] - color_blanco[1]) * factor)
+            b = int(color_blanco[2] + (color_menta[2] - color_blanco[2]) * factor)
+            
         draw.line([(0, y), (width, y)], fill=(r, g, b, 255))
+        
     return base
 
 def generar_imagen_banner(imagen_bytes, precio_oferta, precio_antes):
@@ -367,20 +369,22 @@ def generar_imagen_banner(imagen_bytes, precio_oferta, precio_antes):
     except Exception:
         return None
 
-    img_producto = recortar_bordes_blancos(img_producto)
-
     canvas_w, canvas_h = 800, 800
-    canvas = crear_fondo_degradado_marcado(canvas_w, canvas_h)
+    canvas = crear_fondo_degradado_ejemplo(canvas_w, canvas_h)
 
-    max_w, max_h = 600, 460
+    # Escalado de la imagen manteniendo dimensiones originales
+    max_w, max_h = 620, 480
     img_producto.thumbnail((max_w, max_h), Image.Resampling.LANCZOS)
     
     x_pos = (canvas_w - img_producto.width) // 2
     y_pos = (480 - img_producto.height) // 2 + 10
+    
+    # Se pega sobre la sección blanca superior
     canvas.paste(img_producto, (x_pos, y_pos), img_producto)
 
     draw = ImageDraw.Draw(canvas)
 
+    # Logo del canal
     if os.path.exists(LOGO_PATH):
         try:
             logo = Image.open(LOGO_PATH).convert("RGBA")
@@ -390,7 +394,7 @@ def generar_imagen_banner(imagen_bytes, precio_oferta, precio_antes):
             draw_mask = ImageDraw.Draw(mask)
             draw_mask.ellipse((0, 0, logo.size[0], logo.size[1]), fill=255)
             
-            draw.ellipse((35, 675, 35 + logo.size[0] + 8, 675 + logo.size[1] + 8), fill=(255, 255, 255, 255), outline=(180, 190, 200, 255), width=2)
+            draw.ellipse((35, 675, 35 + logo.size[0] + 8, 675 + logo.size[1] + 8), fill=(255, 255, 255, 255), outline=(210, 225, 220, 255), width=2)
             canvas.paste(logo, (39, 679), mask)
         except Exception:
             pass
@@ -398,6 +402,7 @@ def generar_imagen_banner(imagen_bytes, precio_oferta, precio_antes):
     font_oferta = cargar_fuente_gigante(tamano=70, es_bold=True)
     font_antes = cargar_fuente_gigante(tamano=45, es_bold=False)
 
+    # Precio original tachado
     if precio_antes:
         texto_antes = f"{precio_antes}€"
         bbox_ant = draw.textbbox((0, 0), texto_antes, font=font_antes)
@@ -410,6 +415,7 @@ def generar_imagen_banner(imagen_bytes, precio_oferta, precio_antes):
         line_y = y_ant + (h_ant // 2) + 2
         draw.line([(x_ant - 12, line_y), (x_ant + w_ant + 12, line_y)], fill=(200, 30, 30, 255), width=5)
 
+    # Botón de precio de oferta
     if precio_oferta:
         texto_oferta = f"{precio_oferta}€"
         bbox_of = draw.textbbox((0, 0), texto_oferta, font=font_oferta)
