@@ -6,7 +6,7 @@ import threading
 import requests
 from urllib.parse import quote, unquote
 from bs4 import BeautifulSoup
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw, ImageFont, ImageChops
 from flask import Flask
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, MessageHandler, filters, ContextTypes
@@ -197,8 +197,17 @@ def obtener_datos_amazon(url_real):
     return None
 
 # ==========================================
-# 5. RENDERIZADO DE IMAGEN
+# 5. GENERADOR GRÁFICO (RECORTE Y AUTO-ESCALADO)
 # ==========================================
+def recortar_bordes_blancos(img):
+    """Elimina los márgenes blancos o transparentes sobrantes alrededor del producto"""
+    bg = Image.new(img.mode, img.size, (255, 255, 255, 255))
+    diff = ImageChops.difference(img, bg)
+    bbox = diff.getbbox()
+    if bbox:
+        return img.crop(bbox)
+    return img
+
 def generar_imagen_banner(imagen_url, precio_oferta, precio_antes):
     try:
         r = requests.get(imagen_url, timeout=10)
@@ -206,34 +215,37 @@ def generar_imagen_banner(imagen_url, precio_oferta, precio_antes):
     except Exception:
         return None
 
+    # Recortar el lienzo blanco gigante que traen las tiendas de origen
+    img_producto = recortar_bordes_blancos(img_producto)
+
     canvas_w, canvas_h = 800, 800
     canvas = Image.new("RGBA", (canvas_w, canvas_h), (255, 255, 255, 255))
 
-    # Ajuste de tamaño para centrado óptimo de producto
-    img_producto.thumbnail((680, 520))
+    # Redimensionar la imagen recortada para maximizar su tamaño visual
+    img_producto.thumbnail((700, 480), Image.Resampling.LANCZOS)
     x_pos = (canvas_w - img_producto.width) // 2
-    y_pos = (550 - img_producto.height) // 2
+    y_pos = (520 - img_producto.height) // 2 + 20
     canvas.paste(img_producto, (x_pos, y_pos), img_producto)
 
     # Añadir Logo
     if os.path.exists(LOGO_PATH):
         try:
             logo = Image.open(LOGO_PATH).convert("RGBA")
-            logo.thumbnail((90, 90))
-            canvas.paste(logo, (35, 675), logo)
+            logo.thumbnail((95, 95))
+            canvas.paste(logo, (35, 670), logo)
         except Exception:
             pass
 
     draw = ImageDraw.Draw(canvas)
     
     try:
-        font_oferta = ImageFont.truetype("arialbd.ttf", 64)
-        font_antes = ImageFont.truetype("arial.ttf", 40)
+        font_oferta = ImageFont.truetype("arialbd.ttf", 68)
+        font_antes = ImageFont.truetype("arial.ttf", 42)
     except IOError:
         font_oferta = ImageFont.load_default()
         font_antes = ImageFont.load_default()
 
-    y_cursor = 560
+    y_cursor = 550
 
     # Precio Anterior Tachado
     if precio_antes:
@@ -243,10 +255,10 @@ def generar_imagen_banner(imagen_url, precio_oferta, precio_antes):
         h_text = bbox[3] - bbox[1]
         x_text = (canvas_w - w_text) // 2
 
-        draw.text((x_text, y_cursor), texto_antes, fill=(180, 50, 50, 255), font=font_antes)
-        line_y = y_cursor + (h_text // 2) + 8
-        draw.line([(x_text - 8, line_y), (x_text + w_text + 8, line_y)], fill=(180, 50, 50, 255), width=4)
-        y_cursor += 55
+        draw.text((x_text, y_cursor), texto_antes, fill=(200, 40, 40, 255), font=font_antes)
+        line_y = y_cursor + (h_text // 2) + 10
+        draw.line([(x_text - 10, line_y), (x_text + w_text + 10, line_y)], fill=(200, 40, 40, 255), width=5)
+        y_cursor += 60
 
     # Botón Naranja con Precio Final
     if precio_oferta:
@@ -255,14 +267,14 @@ def generar_imagen_banner(imagen_url, precio_oferta, precio_antes):
         w_of = bbox_of[2] - bbox_of[0]
         h_of = bbox_of[3] - bbox_of[1]
 
-        padding_x, padding_y = 45, 15
+        padding_x, padding_y = 50, 16
         rect_w = w_of + (padding_x * 2)
         rect_h = h_of + (padding_y * 2)
 
         rect_x = (canvas_w - rect_w) // 2
         rect_y = y_cursor
 
-        draw.rounded_rectangle([rect_x, rect_y, rect_x + rect_w, rect_y + rect_h], radius=18, fill=(255, 102, 0, 255))
+        draw.rounded_rectangle([rect_x, rect_y, rect_x + rect_w, rect_y + rect_h], radius=20, fill=(255, 102, 0, 255))
         
         text_x = rect_x + padding_x - bbox_of[0]
         text_y = rect_y + padding_y - bbox_of[1]
