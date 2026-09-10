@@ -44,13 +44,9 @@ def run_web():
 threading.Thread(target=run_web, daemon=True).start()
 
 # ==========================================
-# 3. CARGA DE FUENTES SIN ERRORES EN SERVIDOR
+# 3. CARGA DE FUENTES TIPOGRÁFICAS
 # ==========================================
 def cargar_fuente_gigante(tamano=60, es_bold=True):
-    """
-    Descarga una fuente real TTF directamente desde GitHub de Google Fonts
-    para evitar que se use la fuente defectuosa por defecto de Linux/Render.
-    """
     nombre_archivo = "OpenSans-Bold.ttf" if es_bold else "OpenSans-Regular.ttf"
     if not os.path.exists(nombre_archivo):
         url = f"https://github.com/google/fonts/raw/main/ofl/opensans/{nombre_archivo}"
@@ -68,7 +64,6 @@ def cargar_fuente_gigante(tamano=60, es_bold=True):
         except Exception:
             pass
 
-    # Intentar fuentes típicas de Linux si la descarga falló
     for path in ["/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", "/usr/share/fonts/ttf/DejaVuSans-Bold.ttf"]:
         if os.path.exists(path):
             try:
@@ -213,7 +208,7 @@ def obtener_datos_amazon(url_real):
     return None
 
 # ==========================================
-# 6. GENERADOR GRÁFICO (GARANTIZADO FUENTE Y ESCALA)
+# 6. GENERADOR GRÁFICO CON DEGRADADO Y LOGO PEQUEÑO
 # ==========================================
 def recortar_bordes_blancos(img):
     img_rgb = img.convert("RGB")
@@ -225,6 +220,17 @@ def recortar_bordes_blancos(img):
         return img.crop(bbox)
     return img
 
+def crear_fondo_degradado(width, height, color_inicio=(255, 255, 255), color_fin=(240, 244, 248)):
+    """Genera una imagen con degradado vertical suave desde blanco hacia azulado claro"""
+    base = Image.new("RGBA", (width, height), (255, 255, 255, 255))
+    draw = ImageDraw.Draw(base)
+    for y in range(height):
+        r = int(color_inicio[0] + (color_fin[0] - color_inicio[0]) * (y / height))
+        g = int(color_inicio[1] + (color_fin[1] - color_inicio[1]) * (y / height))
+        b = int(color_inicio[2] + (color_fin[2] - color_inicio[2]) * (y / height))
+        draw.line([(0, y), (width, y)], fill=(r, g, b, 255))
+    return base
+
 def generar_imagen_banner(imagen_url, precio_oferta, precio_antes):
     try:
         r = requests.get(imagen_url, timeout=10)
@@ -232,38 +238,37 @@ def generar_imagen_banner(imagen_url, precio_oferta, precio_antes):
     except Exception:
         return None
 
-    # Recortar espacios vacíos alrededor de la foto del producto
     img_producto = recortar_bordes_blancos(img_producto)
 
-    # LIENZO CONTROLADO DE 800x800 PÍXELES
+    # 1. Canvas con Degradado Suave de Fondo (800x800 px)
     canvas_w, canvas_h = 800, 800
-    canvas = Image.new("RGBA", (canvas_w, canvas_h), (255, 255, 255, 255))
+    canvas = crear_fondo_degradado(canvas_w, canvas_h)
 
-    # Ajustar tamaño de la imagen del producto
+    # 2. Redimensionar y centrar el producto en la parte superior
     max_w, max_h = 600, 460
     img_producto.thumbnail((max_w, max_h), Image.Resampling.LANCZOS)
     
-    # Pegar el producto centrado arriba
     x_pos = (canvas_w - img_producto.width) // 2
     y_pos = (480 - img_producto.height) // 2 + 10
     canvas.paste(img_producto, (x_pos, y_pos), img_producto)
 
-    # Colocar logo en la esquina inferior izquierda
+    # 3. Insertar Logo Pequeño Discreto (Esquina Inferior Izquierda)
     if os.path.exists(LOGO_PATH):
         try:
             logo = Image.open(LOGO_PATH).convert("RGBA")
-            logo.thumbnail((120, 120))
-            canvas.paste(logo, (40, 640), logo)
+            logo.thumbnail((70, 70), Image.Resampling.LANCZOS)
+            
+            # Pegar el logo en la esquina con margen
+            canvas.paste(logo, (35, 680), logo)
         except Exception:
             pass
 
     draw = ImageDraw.Draw(canvas)
 
-    # Cargar Fuentes TTF reales descargadas en tiempo de ejecución
     font_oferta = cargar_fuente_gigante(tamano=70, es_bold=True)
     font_antes = cargar_fuente_gigante(tamano=45, es_bold=False)
 
-    # 1. Dibujar Precio Anterior Tachado (Centrado)
+    # 4. Precio Anterior Tachado (Centrado)
     if precio_antes:
         texto_antes = f"{precio_antes}€"
         bbox_ant = draw.textbbox((0, 0), texto_antes, font=font_antes)
@@ -276,7 +281,7 @@ def generar_imagen_banner(imagen_url, precio_oferta, precio_antes):
         line_y = y_ant + (h_ant // 2) + 2
         draw.line([(x_ant - 12, line_y), (x_ant + w_ant + 12, line_y)], fill=(200, 30, 30, 255), width=5)
 
-    # 2. Dibujar Píldora Naranja con el Precio Final (Derecha Abajo)
+    # 5. Botón Naranja Gigante con el Precio Final (Derecha Abajo)
     if precio_oferta:
         texto_oferta = f"{precio_oferta}€"
         bbox_of = draw.textbbox((0, 0), texto_oferta, font=font_oferta)
@@ -290,7 +295,6 @@ def generar_imagen_banner(imagen_url, precio_oferta, precio_antes):
         rect_x = canvas_w - rect_w - 40
         rect_y = 620
 
-        # Fondo naranja redondeado
         draw.rounded_rectangle(
             [rect_x, rect_y, rect_x + rect_w, rect_y + rect_h],
             radius=22,
