@@ -170,7 +170,7 @@ def es_imagen_valida_producto(url, bytes_img):
 
         stat = ImageStat.Stat(img)
         desviacion_std = sum(stat.stddev) / len(stat.stddev)
-        if desviacion_std < 15:
+        if desviacion_std < 12:
             return False
 
         return True
@@ -183,6 +183,7 @@ def es_imagen_valida_producto(url, bytes_img):
 def obtener_datos_padelnuestro(url_real):
     html_content = ""
     
+    # PadelNuestro requiere ScraperAPI obligatoriamente para evitar bloqueos Cloudflare
     if SCRAPER_API_KEY:
         try:
             payload = {
@@ -192,15 +193,16 @@ def obtener_datos_padelnuestro(url_real):
                 'country_code': 'es'
             }
             r = requests.get('http://api.scraperapi.com', params=payload, timeout=35)
-            if r.status_code == 200:
+            if r.status_code == 200 and "cloudflare" not in r.text.lower():
                 html_content = r.text
         except Exception:
             pass
 
+    # Fallback a petición normal por si ScraperAPI falla
     if not html_content:
-        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
+        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'}
         try:
-            r = requests.get(url_real, headers=headers, timeout=10)
+            r = requests.get(url_real, headers=headers, timeout=12)
             if r.status_code == 200:
                 html_content = r.text
         except Exception:
@@ -239,6 +241,7 @@ def obtener_datos_padelnuestro(url_real):
             pass
 
     imagen_valida_bytes = None
+    headers_img = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
 
     for u in candidatos_url:
         if not u or 'data:image' in u: 
@@ -251,7 +254,7 @@ def obtener_datos_padelnuestro(url_real):
         u = re.sub(r'/cache/[^/]+/', '/image/', u)
 
         try:
-            r_img = requests.get(u, timeout=8)
+            r_img = requests.get(u, headers=headers_img, timeout=8)
             if r_img.status_code == 200 and es_imagen_valida_producto(u, r_img.content):
                 imagen_valida_bytes = r_img.content
                 break
@@ -325,33 +328,29 @@ def obtener_datos_amazon(url_real):
     return None
 
 # ==========================================
-# 7. RECORTE DE MARGENES BLANCOS (AUTOCROP)
+# 7. RECORTE DE MARGENES BLANCOS SEGURO (AUTOCROP)
 # ==========================================
-def recortar_espacio_blanco(img):
-    """
-    Elimina los márgenes blancos sobrantes alrededor del producto.
-    Esto soluciona el problema de las fotos pequeñas de PadelNuestro.
-    """
+def recortar_espacio_blanco_seguro(img_pil):
     try:
-        img_rgb = img.convert("RGB")
-        fondo_blanco = Image.new("RGB", img_rgb.size, (255, 255, 255))
-        diferencia = ImageChops.difference(img_rgb, fondo_blanco).convert("L")
+        img_rgba = img_pil.convert("RGBA")
+        bg = Image.new("RGBA", img_rgba.size, (255, 255, 255, 255))
+        diff = ImageChops.difference(img_rgba.convert("RGB"), bg.convert("RGB")).convert("L")
         
-        # Umbral para detectar píxeles que no son blanco puro
-        mascara = diferencia.point(lambda p: 255 if p > 12 else 0)
-        bbox = mascara.getbbox()
+        mask = diff.point(lambda p: 255 if p > 15 else 0)
+        bbox = mask.getbbox()
         
         if bbox:
-            # Añadimos un pequeño margen de seguridad de 10px
-            w, h = img.size
-            x1 = max(0, bbox[0] - 10)
-            y1 = max(0, bbox[1] - 10)
-            x2 = min(w, bbox[2] + 10)
-            y2 = min(h, bbox[3] + 10)
-            return img.crop((x1, y1, x2, y2))
+            w, h = img_rgba.size
+            x1 = max(0, bbox[0] - 12)
+            y1 = max(0, bbox[1] - 12)
+            x2 = min(w, bbox[2] + 12)
+            y2 = min(h, bbox[3] + 12)
+            
+            if (x2 - x1) > 100 and (y2 - y1) > 100:
+                return img_rgba.crop((x1, y1, x2, y2))
     except Exception:
         pass
-    return img
+    return img_pil
 
 # ==========================================
 # 8. GENERADOR GRÁFICO (DEGRADADO BLANCO A MENTA)
@@ -382,17 +381,14 @@ def generar_imagen_banner(imagen_bytes, precio_oferta, precio_antes):
         return None
 
     try:
-        img_producto = Image.open(io.BytesIO(imagen_bytes)).convert("RGBA")
+        img_producto = Image.open(io.BytesIO(imagen_bytes))
+        img_producto = recortar_espacio_blanco_seguro(img_producto).convert("RGBA")
     except Exception:
         return None
-
-    # RECORTAR BORDES BLANCOS EXTRA DE PADELNUESTRO
-    img_producto = recortar_espacio_blanco(img_producto)
 
     canvas_w, canvas_h = 800, 800
     canvas = crear_fondo_degradado_ejemplo(canvas_w, canvas_h)
 
-    # Ahora que no hay margenes vacíos, escalamos el producto para que llene el espacio
     max_w, max_h = 680, 500
     img_producto.thumbnail((max_w, max_h), Image.Resampling.LANCZOS)
     
@@ -403,7 +399,6 @@ def generar_imagen_banner(imagen_bytes, precio_oferta, precio_antes):
 
     draw = ImageDraw.Draw(canvas)
 
-    # Logo del canal
     if os.path.exists(LOGO_PATH):
         try:
             logo = Image.open(LOGO_PATH).convert("RGBA")
@@ -421,7 +416,6 @@ def generar_imagen_banner(imagen_bytes, precio_oferta, precio_antes):
     font_oferta = cargar_fuente_gigante(tamano=70, es_bold=True)
     font_antes = cargar_fuente_gigante(tamano=45, es_bold=False)
 
-    # Precio original tachado
     if precio_antes:
         texto_antes = f"{precio_antes}€"
         bbox_ant = draw.textbbox((0, 0), texto_antes, font=font_antes)
@@ -434,7 +428,6 @@ def generar_imagen_banner(imagen_bytes, precio_oferta, precio_antes):
         line_y = y_ant + (h_ant // 2) + 2
         draw.line([(x_ant - 12, line_y), (x_ant + w_ant + 12, line_y)], fill=(200, 30, 30, 255), width=5)
 
-    # Botón de precio de oferta
     if precio_oferta:
         texto_oferta = f"{precio_oferta}€"
         bbox_of = draw.textbbox((0, 0), texto_oferta, font=font_oferta)
@@ -498,12 +491,15 @@ async def procesar_mensaje(update: Update, context: ContextTypes.DEFAULT_TYPE):
     url_afiliado, tienda, url_scraping = procesar_enlace_afiliado(url_original)
 
     datos = None
-    if tienda == "PADELMARKET":
-        datos = obtener_datos_padelmarket(url_scraping)
-    elif tienda == "PADELNUESTRO":
-        datos = obtener_datos_padelnuestro(url_scraping)
-    elif tienda == "AMAZON":
-        datos = obtener_datos_amazon(url_scraping)
+    try:
+        if tienda == "PADELMARKET":
+            datos = obtener_datos_padelmarket(url_scraping)
+        elif tienda == "PADELNUESTRO":
+            datos = obtener_datos_padelnuestro(url_scraping)
+        elif tienda == "AMAZON":
+            datos = obtener_datos_amazon(url_scraping)
+    except Exception as e:
+        await update.message.reply_text(f"⚠️ Aviso al extraer datos: {str(e)}")
 
     titulo_final = titulo_manual or (datos.get("titulo") if datos else "Producto Pádel")
     imagen_bytes = datos.get("imagen_bytes") if datos else None
@@ -533,7 +529,10 @@ async def procesar_mensaje(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     foto_banner = None
     if imagen_bytes and (precio_oferta or precio_antes):
-        foto_banner = generar_imagen_banner(imagen_bytes, precio_oferta, precio_antes)
+        try:
+            foto_banner = generar_imagen_banner(imagen_bytes, precio_oferta, precio_antes)
+        except Exception as e:
+            await update.message.reply_text(f"⚠️ Error al crear banner: {str(e)}. Se publicará solo texto.")
 
     try:
         if foto_banner:
@@ -544,6 +543,7 @@ async def procesar_mensaje(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 parse_mode="Markdown",
                 reply_markup=keyboard
             )
+            await update.message.reply_text(f"✅ ¡Anuncio con BANNER de **{tienda}** publicado!")
         else:
             await context.bot.send_message(
                 chat_id=CANAL_ID,
@@ -552,10 +552,10 @@ async def procesar_mensaje(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 reply_markup=keyboard,
                 disable_web_page_preview=False
             )
+            await update.message.reply_text(f"✅ ¡Anuncio (solo texto) de **{tienda}** publicado! (No se pudo procesar la foto).")
             
-        await update.message.reply_text(f"✅ ¡Anuncio de **{tienda}** procesado correctamente!")
     except Exception as e:
-        await update.message.reply_text(f"❌ Error durante la publicación: {str(e)}")
+        await update.message.reply_text(f"❌ Error al publicar en Telegram: {str(e)}")
 
 def main():
     application = Application.builder().token(TELEGRAM_TOKEN).build()
