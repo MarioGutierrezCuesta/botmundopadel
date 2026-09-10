@@ -171,20 +171,48 @@ def obtener_datos_padelnuestro(url_real):
             titulo = soup.find('meta', property='og:title')
             
             img_url = None
-            # 1. Buscar en las etiquetas meta og:image
-            imagen_meta = soup.find('meta', property='og:image')
-            if imagen_meta:
-                img_url = imagen_meta['content']
-            
-            # 2. Si no hay og:image, buscar la imagen del producto en el DOM
-            if not img_url:
-                img_tag = soup.find('img', {'id': 'image-main'}) or soup.find('img', {'class': 'gallery-placeholder__image'})
-                if img_tag and 'src' in img_tag.attrs:
-                    img_url = img_tag['src']
 
-            # Fix PadelNuestro: Forzar la extracción de la imagen HD sin dimensiones pequeñas
+            # 1. Buscar en JSON-LD (Estructura de datos oficial de productos, evita placeholders)
+            scripts_json = soup.find_all('script', type='application/ld+json')
+            for s in scripts_json:
+                try:
+                    data = json.loads(s.string)
+                    if isinstance(data, list):
+                        data = data[0]
+                    if data.get('@type') == 'Product' and 'image' in data:
+                        images = data['image']
+                        if isinstance(images, list) and len(images) > 0:
+                            img_url = images[0]
+                        elif isinstance(images, str):
+                            img_url = images
+                        break
+                except Exception:
+                    pass
+
+            # 2. Si no hay JSON-LD, buscar la imagen del producto evitando placeholders
+            if not img_url:
+                imagenes = soup.find_all('img')
+                for img in imagenes:
+                    src = img.get('data-src') or img.get('data-original') or img.get('src') or ''
+                    if src and not any(placeholder in src.lower() for placeholder in ['placeholder', 'loading', 'default', 'svg', 'data:image']):
+                        if 'media/catalog/product' in src or 'images/' in src or 'products/' in src:
+                            img_url = src
+                            break
+
+            # 3. Fallback a og:image
+            if not img_url:
+                imagen_meta = soup.find('meta', property='og:image')
+                if imagen_meta:
+                    img_url = imagen_meta['content']
+
+            # Limpiar URL si es relativa o miniatura
             if img_url:
-                # Reemplaza los sufijos de dimensiones tipo -150x150, -300x300, /cache/ por alta resolución
+                if img_url.startswith('//'):
+                    img_url = 'https:' + img_url
+                elif img_url.startswith('/'):
+                    img_url = 'https://www.padelnuestro.com' + img_url
+
+                # Forzar alta resolución sustituyendo dimensiones de caché
                 img_url = re.sub(r'-\d+x\d+\.', '.', img_url)
                 img_url = re.sub(r'/cache/[^/]+/', '/image/', img_url)
 
@@ -226,7 +254,7 @@ def obtener_datos_amazon(url_real):
     return None
 
 # ==========================================
-# 6. GENERADOR GRÁFICO (CON ESCALADO FORZADO PARA IMÁGENES PEQUEÑAS)
+# 6. GENERADOR GRÁFICO
 # ==========================================
 def recortar_bordes_blancos(img):
     img_rgb = img.convert("RGB")
@@ -257,7 +285,6 @@ def generar_imagen_banner(imagen_url, precio_oferta, precio_antes):
 
     img_producto = recortar_bordes_blancos(img_producto)
 
-    # Si la imagen obtenida es enana (menos de 350px), la forzamos a crecer primero
     if img_producto.width < 350 or img_producto.height < 350:
         factor_escala = max(500 / img_producto.width, 500 / img_producto.height)
         nuevo_w = int(img_producto.width * factor_escala)
@@ -267,7 +294,6 @@ def generar_imagen_banner(imagen_url, precio_oferta, precio_antes):
     canvas_w, canvas_h = 800, 800
     canvas = crear_fondo_degradado(canvas_w, canvas_h)
 
-    # Redimensionado proporcional al cuadro del banner
     max_w, max_h = 600, 460
     img_producto.thumbnail((max_w, max_h), Image.Resampling.LANCZOS)
     
@@ -277,7 +303,6 @@ def generar_imagen_banner(imagen_url, precio_oferta, precio_antes):
 
     draw = ImageDraw.Draw(canvas)
 
-    # Estampar logo
     if os.path.exists(LOGO_PATH):
         try:
             logo = Image.open(LOGO_PATH).convert("RGBA")
@@ -296,7 +321,6 @@ def generar_imagen_banner(imagen_url, precio_oferta, precio_antes):
     font_oferta = cargar_fuente_gigante(tamano=70, es_bold=True)
     font_antes = cargar_fuente_gigante(tamano=45, es_bold=False)
 
-    # Precio Anterior Tachado
     if precio_antes:
         texto_antes = f"{precio_antes}€"
         bbox_ant = draw.textbbox((0, 0), texto_antes, font=font_antes)
@@ -309,7 +333,6 @@ def generar_imagen_banner(imagen_url, precio_oferta, precio_antes):
         line_y = y_ant + (h_ant // 2) + 2
         draw.line([(x_ant - 12, line_y), (x_ant + w_ant + 12, line_y)], fill=(200, 30, 30, 255), width=5)
 
-    # Botón Naranja
     if precio_oferta:
         texto_oferta = f"{precio_oferta}€"
         bbox_of = draw.textbbox((0, 0), texto_oferta, font=font_oferta)
