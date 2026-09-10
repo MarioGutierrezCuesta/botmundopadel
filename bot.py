@@ -6,7 +6,7 @@ import threading
 import requests
 from urllib.parse import quote, unquote
 from bs4 import BeautifulSoup
-from PIL import Image, ImageDraw, ImageFont, ImageChops, ImageStat
+from PIL import Image, ImageDraw, ImageFont, ImageChops
 from flask import Flask
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, MessageHandler, filters, ContextTypes
@@ -27,7 +27,7 @@ TAG_PADELMARKET = "24562"
 CJ_PID = os.environ.get("CJ_PID", "101860715")
 CJ_AID_PADELNUESTRO = os.environ.get("CJ_AID", "17306895")
 
-# Configuración de Marca (Ruta del Logo Local)
+# Configuración de Marca
 LOGO_PATH = "logo.png"
 
 # ==========================================
@@ -87,7 +87,7 @@ def procesar_enlace_afiliado(url_original):
             url_final = url_real
         return url_final, tienda, url_real
 
-    # PadelMarket (Sin créditos)
+    # PadelMarket
     if "padelmarket.com" in url_real or "padelmarket" in url_original:
         tienda = "PADELMARKET"
         url_base = url_real.split('?')[0]
@@ -123,7 +123,7 @@ def procesar_enlace_afiliado(url_original):
     return url_final, tienda, url_real
 
 # ==========================================
-# 4. SCRAPERS GRATUITOS (DIRECTOS)
+# 4. SCRAPERS DIRECTOS
 # ==========================================
 def obtener_datos_padelmarket(url_real):
     headers = {
@@ -196,18 +196,15 @@ def obtener_datos_amazon(url_real):
     return None
 
 # ==========================================
-# 5. GENERADOR GRÁFICO (RECORTE AGRESIVO Y MAXIMIZADO)
+# 5. GENERADOR GRÁFICO (RECORTE EXTREMO Y FORMATO ANCHO)
 # ==========================================
-def recortar_objeto_inteligente(img, umbral=240):
-    """Fuerza la detección del producto eliminando bordes claros/blancos"""
+def recortar_bordes_blancos_tolerante(img, tolerancia=235):
+    """Elimina agresivamente cualquier borde o fondo claro/blanco del producto"""
     gray = img.convert('L')
-    # Convertir a binario: los píxeles más claros que el umbral se vuelven blancos
-    bw = gray.point(lambda p: 255 if p > umbral else 0)
-    
-    # Invertir para que el fondo sea negro y el objeto sea blanco
-    inverted = ImageChops.invert(bw)
-    bbox = inverted.getbbox()
-    
+    # Binarización: Todo lo que sea casi blanco (>235) pasa a 255
+    bw = gray.point(lambda p: 255 if p > tolerancia else 0)
+    inv = ImageChops.invert(bw)
+    bbox = inv.getbbox()
     if bbox:
         return img.crop(bbox)
     return img
@@ -219,45 +216,44 @@ def generar_imagen_banner(imagen_url, precio_oferta, precio_antes):
     except Exception:
         return None
 
-    # 1. Recorte inteligente que elimina el fondo aunque no sea blanco 100% puro
-    img_producto = recortar_objeto_inteligente(img_producto)
+    # 1. Recorte agresivo de los bordes blancos sobrantes
+    img_producto = recortar_bordes_blancos_tolerante(img_producto)
 
-    # Canvas de 800x600 px (Relación de aspecto optimizada para Telegram)
-    canvas_w, canvas_h = 800, 600
+    # 2. Canvas horizontal estilo Banner (1000x800)
+    canvas_w, canvas_h = 1000, 800
     canvas = Image.new("RGBA", (canvas_w, canvas_h), (255, 255, 255, 255))
 
-    # 2. Escalar el producto para ocupar el 90% del ancho (Máxima visibilidad)
-    max_w = int(canvas_w * 0.90)  # 720 px de ancho máximo
-    max_h = 380                    # Altura máxima permitida para dejar espacio al precio
-
+    # 3. Escalar el producto para ocupar el 92% del ancho disponible
+    max_w = 920
+    max_h = 520
     img_producto.thumbnail((max_w, max_h), Image.Resampling.LANCZOS)
-    
-    # Centrar la imagen en la parte superior
+
+    # Centrar la imagen en la zona superior
     x_pos = (canvas_w - img_producto.width) // 2
-    y_pos = (400 - img_producto.height) // 2 + 10
+    y_pos = (550 - img_producto.height) // 2 + 10
     canvas.paste(img_producto, (x_pos, y_pos), img_producto)
 
-    # 3. Insertar Logo
+    # 4. Logo en la esquina
     if os.path.exists(LOGO_PATH):
         try:
             logo = Image.open(LOGO_PATH).convert("RGBA")
-            logo.thumbnail((80, 80))
-            canvas.paste(logo, (25, 500), logo)
+            logo.thumbnail((110, 110))
+            canvas.paste(logo, (30, 660), logo)
         except Exception:
             pass
 
     draw = ImageDraw.Draw(canvas)
     
     try:
-        font_oferta = ImageFont.truetype("arialbd.ttf", 60)
-        font_antes = ImageFont.truetype("arial.ttf", 36)
+        font_oferta = ImageFont.truetype("arialbd.ttf", 80)
+        font_antes = ImageFont.truetype("arial.ttf", 50)
     except IOError:
         font_oferta = ImageFont.load_default()
         font_antes = ImageFont.load_default()
 
-    y_cursor = 410
+    y_cursor = 560
 
-    # 4. Dibujar Precio Anterior (Tachado en rojo)
+    # 5. Dibujar Precio Anterior (Tachado)
     if precio_antes:
         texto_antes = f"{precio_antes}€"
         bbox = draw.textbbox((0, 0), texto_antes, font=font_antes)
@@ -265,26 +261,26 @@ def generar_imagen_banner(imagen_url, precio_oferta, precio_antes):
         h_text = bbox[3] - bbox[1]
         x_text = (canvas_w - w_text) // 2
 
-        draw.text((x_text, y_cursor), texto_antes, fill=(200, 40, 40, 255), font=font_antes)
-        line_y = y_cursor + (h_text // 2) + 8
-        draw.line([(x_text - 8, line_y), (x_text + w_text + 8, line_y)], fill=(200, 40, 40, 255), width=4)
-        y_cursor += 50
+        draw.text((x_text, y_cursor), texto_antes, fill=(210, 40, 40, 255), font=font_antes)
+        line_y = y_cursor + (h_text // 2) + 12
+        draw.line([(x_text - 12, line_y), (x_text + w_text + 12, line_y)], fill=(210, 40, 40, 255), width=6)
+        y_cursor += 70
 
-    # 5. Dibujar Botón Naranja con Precio Final
+    # 6. Dibujar Botón Naranja Gigante con el Precio de Oferta
     if precio_oferta:
         texto_oferta = f"{precio_oferta}€"
         bbox_of = draw.textbbox((0, 0), texto_oferta, font=font_oferta)
         w_of = bbox_of[2] - bbox_of[0]
         h_of = bbox_of[3] - bbox_of[1]
 
-        padding_x, padding_y = 40, 12
+        padding_x, padding_y = 60, 18
         rect_w = w_of + (padding_x * 2)
         rect_h = h_of + (padding_y * 2)
 
         rect_x = (canvas_w - rect_w) // 2
         rect_y = y_cursor
 
-        draw.rounded_rectangle([rect_x, rect_y, rect_x + rect_w, rect_y + rect_h], radius=16, fill=(255, 102, 0, 255))
+        draw.rounded_rectangle([rect_x, rect_y, rect_x + rect_w, rect_y + rect_h], radius=24, fill=(255, 102, 0, 255))
         
         text_x = rect_x + padding_x - bbox_of[0]
         text_y = rect_y + padding_y - bbox_of[1]
@@ -297,7 +293,7 @@ def generar_imagen_banner(imagen_url, precio_oferta, precio_antes):
     return output
 
 # ==========================================
-# 6. MANEJADOR Y PUBLICADOR
+# 6. MANEJADOR Y PUBLICADOR DE TELEGRAM
 # ==========================================
 async def procesar_mensaje(update: Update, context: ContextTypes.DEFAULT_TYPE):
     texto = update.message.text
@@ -341,7 +337,6 @@ async def procesar_mensaje(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except ValueError:
             pass
 
-    # Formato del mensaje
     caption = f"🎾 **NUEVO CHOLLAZO{dto_str}** #Publicidad\n\n"
     caption += f"✅ {titulo_final}\n\n"
     caption += f"Sugerido por TU CANAL DE CHOLLOS\n{CANAL_ID}\n\n"
