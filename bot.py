@@ -4,7 +4,7 @@ import re
 import json
 import threading
 import requests
-from urllib.parse import quote
+from urllib.parse import quote, unquote
 from bs4 import BeautifulSoup
 from PIL import Image, ImageDraw, ImageFont
 from flask import Flask
@@ -55,13 +55,20 @@ def descorchar_url(url):
         return url
 
 def procesar_enlace_afiliado(url_original):
-    # Detectar enlaces directos o ya procesados por CJ Affiliate
     cj_domains = ["anrdoezrs.net", "dpbolvw.net", "tkqlhce.com", "jdoqocy.com", "kqzyfj.com"]
+    
+    # Si viene directamente un enlace ya formateado de CJ
     if any(domain in url_original for domain in cj_domains):
-        return url_original.strip(), "PADELNUESTRO"
+        match_url = re.search(r'url=([^&]+)', url_original)
+        if match_url:
+            url_real = unquote(match_url.group(1))
+        else:
+            url_real = descorchar_url(url_original.strip())
+        return url_original.strip(), "PADELNUESTRO", url_real
 
     if "tidd.ly" in url_original:
-        return url_original.strip(), "PADELMARKET"
+        url_real = descorchar_url(url_original.strip())
+        return url_original.strip(), "PADELMARKET", url_real
 
     url_real = descorchar_url(url_original.strip())
     
@@ -73,7 +80,7 @@ def procesar_enlace_afiliado(url_original):
             url_final = f"https://www.anrdoezrs.net/click-{CJ_PID}-{CJ_AID_PADELNUESTRO}?url={url_encoded}"
         else:
             url_final = url_real
-        return url_final, tienda
+        return url_final, tienda, url_real
 
     # PadelMarket
     if "padelmarket.com" in url_real or "padelmarket" in url_original:
@@ -83,7 +90,7 @@ def procesar_enlace_afiliado(url_original):
             url_final = f"{url_real}{sep}ref={TAG_PADELMARKET}"
         else:
             url_final = url_real
-        return url_final, tienda
+        return url_final, tienda, url_real
 
     # Temu
     if "temu.com" in url_real or "temu.to" in url_original:
@@ -93,7 +100,7 @@ def procesar_enlace_afiliado(url_original):
             url_final = f"{url_real}{sep}referral_code={TAG_TEMU}"
         else:
             url_final = url_real
-        return url_final, tienda
+        return url_final, tienda, url_real
 
     # Amazon (Default)
     tienda = "AMAZON"
@@ -108,7 +115,32 @@ def procesar_enlace_afiliado(url_original):
         else:
             url_final = url_real
             
-    return url_final, tienda
+    return url_final, tienda, url_real
+
+def obtener_datos_padelnuestro(url_real):
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+        'Accept-Language': 'es-ES,es;q=0.9'
+    }
+    try:
+        resp = requests.get(url_real, headers=headers, timeout=12)
+        if resp.status_code == 200:
+            soup = BeautifulSoup(resp.text, 'html.parser')
+            
+            # Intento de extracción por Meta Tags Open Graph
+            titulo = soup.find('meta', property='og:title')
+            imagen = soup.find('meta', property='og:image')
+            
+            titulo_val = titulo['content'] if titulo else "Producto Padel Nuestro"
+            imagen_val = imagen['content'] if imagen else None
+            
+            return {
+                "titulo": titulo_val,
+                "imagen_url": imagen_val
+            }
+    except Exception:
+        pass
+    return None
 
 def obtener_datos_amazon(url_real):
     html_content = ""
@@ -125,3 +157,56 @@ def obtener_datos_amazon(url_real):
 
     if not html_content and SCRAPER_API_KEY:
         payload = {'api_key': SCRAPER_API_KEY, 'url': url_real, 'country_code': 'es'}
+        try:
+            r = requests.get('http://api.scraperapi.com', params=payload, timeout=25)
+            if r.status_code == 200:
+                html_content = r.text
+        except Exception:
+            pass
+
+    if html_content:
+        soup = BeautifulSoup(html_content, 'html.parser')
+        titulo = soup.find(id="productTitle")
+        imagen = soup.find(id="landingImage")
+        return {
+            "titulo": titulo.get_text().strip() if titulo else "Producto Amazon",
+            "imagen_url": imagen['src'] if imagen and 'src' in imagen.attrs else None
+        }
+    return None
+
+# ==========================================
+# 4. MANEJADOR DE MENSAJES DE TELEGRAM
+# ==========================================
+async def procesar_mensaje(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    texto = update.message.text
+    if not texto:
+        return
+
+    # Extraer primera URL del mensaje
+    urls = re.findall(r'https?://[^\s]+', texto)
+    if not urls:
+        return
+
+    url_original = urls[0]
+    url_afiliado, tienda, url_scraping = procesar_enlace_afiliado(url_original)
+
+    # Obtener información según la tienda
+    datos = None
+    if tienda == "PADELNUESTRO":
+        datos = obtener_datos_padelnuestro(url_scraping)
+    elif tienda == "AMAZON":
+        datos = obtener_datos_amazon(url_scraping)
+
+    if datos and datos.get("imagen_url"):
+        mensaje = f"✅ ¡Chollo de **{tienda}** publicado con éxito!\n\nEnlace: {url_afiliado}"
+        await update.message.reply_text(mensaje, parse_mode="Markdown")
+    else:
+        await update.message.reply_text(f"❌ Error: No se pudo obtener la información o imagen del producto de {tienda}.")
+
+def main():
+    application = Application.builder().token(TELEGRAM_TOKEN).build()
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, procesar_mensaje))
+    application.run_polling()
+
+if __name__ == '__main__':
+    main()
