@@ -18,16 +18,13 @@ TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN", "8801288601:AAGjU2UNrzNurMg1XG
 SCRAPER_API_KEY = os.environ.get("SCRAPER_API_KEY", "fc389bd2dcdb6a12d0c7d839b0d4cf58")
 CANAL_ID = "@mundopadelesp"
 
-# Tags y Parámetros de Afiliado
 TAG_AMAZON = "mundopadel09a-21" 
 TAG_TEMU = "ala334124"
 TAG_PADELMARKET = "24562"
 
-# Configuración CJ Affiliate (PadelNuestro)
 CJ_PID = os.environ.get("CJ_PID", "101860715")
 CJ_AID_PADELNUESTRO = os.environ.get("CJ_AID", "17306895")
 
-# Configuración de Marca
 LOGO_PATH = "logo.png"
 
 # ==========================================
@@ -58,7 +55,6 @@ def descorchar_url(url):
         return url
 
 def procesar_enlace_afiliado(url_original):
-    # CJ Affiliate (PadelNuestro)
     cj_domains = ["anrdoezrs.net", "dpbolvw.net", "tkqlhce.com", "jdoqocy.com", "kqzyfj.com"]
     if any(domain in url_original for domain in cj_domains):
         match_url = re.search(r'url=([^&]+)', url_original)
@@ -68,7 +64,6 @@ def procesar_enlace_afiliado(url_original):
             url_real = descorchar_url(url_original.strip())
         return url_original.strip(), "PADELNUESTRO", url_real
 
-    # Awin / PadelMarket acortados (tidd.ly)
     if "tidd.ly" in url_original:
         url_real = descorchar_url(url_original.strip())
         url_base = url_real.split('?')[0]
@@ -77,7 +72,6 @@ def procesar_enlace_afiliado(url_original):
 
     url_real = descorchar_url(url_original.strip())
     
-    # PadelNuestro
     if "padelnuestro.com" in url_real or "padelnuestro" in url_original:
         tienda = "PADELNUESTRO"
         if f"click-{CJ_PID}" not in url_real:
@@ -87,14 +81,12 @@ def procesar_enlace_afiliado(url_original):
             url_final = url_real
         return url_final, tienda, url_real
 
-    # PadelMarket
     if "padelmarket.com" in url_real or "padelmarket" in url_original:
         tienda = "PADELMARKET"
         url_base = url_real.split('?')[0]
         url_final = f"{url_base}?ref={TAG_PADELMARKET}"
         return url_final, tienda, url_real
 
-    # Temu
     if "temu.com" in url_real or "temu.to" in url_original or "share.temu.com" in url_original:
         tienda = "TEMU"
         if "share.temu.com" in url_original:
@@ -107,7 +99,6 @@ def procesar_enlace_afiliado(url_original):
             url_final = url_real
         return url_final, tienda, url_real
 
-    # Amazon
     tienda = "AMAZON"
     match = re.search(r'/(?:dp|gp/product)/([A-Z0-9]{10})', url_real)
     if match:
@@ -196,15 +187,22 @@ def obtener_datos_amazon(url_real):
     return None
 
 # ==========================================
-# 5. GENERADOR GRÁFICO (RECORTE EXTREMO Y FORMATO ANCHO)
+# 5. RECORTE POR COMPARACIÓN DE FONDO
 # ==========================================
-def recortar_bordes_blancos_tolerante(img, tolerancia=235):
-    """Elimina agresivamente cualquier borde o fondo claro/blanco del producto"""
-    gray = img.convert('L')
-    # Binarización: Todo lo que sea casi blanco (>235) pasa a 255
-    bw = gray.point(lambda p: 255 if p > tolerancia else 0)
-    inv = ImageChops.invert(bw)
-    bbox = inv.getbbox()
+def recortar_fondo_automatico(img):
+    """Detecta el color de la esquina superior izquierda y recorta todo lo que sea igual a ese color"""
+    img_rgb = img.convert("RGB")
+    color_fondo = img_rgb.getpixel((0, 0)) # Muestra de la esquina
+    
+    bg = Image.new("RGB", img_rgb.size, color_fondo)
+    diff = ImageChops.difference(img_rgb, bg)
+    
+    # Convertir diferencia a escala de grises y aplicar tolerancia
+    diff = diff.convert("L")
+    threshold = 15 # Tolerancia para tonos casi idénticos
+    mask = diff.point(lambda p: 255 if p > threshold else 0)
+    
+    bbox = mask.getbbox()
     if bbox:
         return img.crop(bbox)
     return img
@@ -216,44 +214,44 @@ def generar_imagen_banner(imagen_url, precio_oferta, precio_antes):
     except Exception:
         return None
 
-    # 1. Recorte agresivo de los bordes blancos sobrantes
-    img_producto = recortar_bordes_blancos_tolerante(img_producto)
+    # 1. Recortar bordes vacíos comparando contra el color de la esquina
+    img_producto = recortar_fondo_automatico(img_producto)
 
-    # 2. Canvas horizontal estilo Banner (1000x800)
-    canvas_w, canvas_h = 1000, 800
+    # Canvas final (800x650)
+    canvas_w, canvas_h = 800, 650
     canvas = Image.new("RGBA", (canvas_w, canvas_h), (255, 255, 255, 255))
 
-    # 3. Escalar el producto para ocupar el 92% del ancho disponible
-    max_w = 920
-    max_h = 520
+    # 2. Redimensionar para llenar el ancho (720px max)
+    max_w = 720
+    max_h = 400
     img_producto.thumbnail((max_w, max_h), Image.Resampling.LANCZOS)
 
-    # Centrar la imagen en la zona superior
+    # Colocar centrado
     x_pos = (canvas_w - img_producto.width) // 2
-    y_pos = (550 - img_producto.height) // 2 + 10
+    y_pos = (420 - img_producto.height) // 2 + 10
     canvas.paste(img_producto, (x_pos, y_pos), img_producto)
 
-    # 4. Logo en la esquina
+    # 3. Logo
     if os.path.exists(LOGO_PATH):
         try:
             logo = Image.open(LOGO_PATH).convert("RGBA")
-            logo.thumbnail((110, 110))
-            canvas.paste(logo, (30, 660), logo)
+            logo.thumbnail((90, 90))
+            canvas.paste(logo, (30, 530), logo)
         except Exception:
             pass
 
     draw = ImageDraw.Draw(canvas)
     
     try:
-        font_oferta = ImageFont.truetype("arialbd.ttf", 80)
-        font_antes = ImageFont.truetype("arial.ttf", 50)
+        font_oferta = ImageFont.truetype("arialbd.ttf", 64)
+        font_antes = ImageFont.truetype("arial.ttf", 40)
     except IOError:
         font_oferta = ImageFont.load_default()
         font_antes = ImageFont.load_default()
 
-    y_cursor = 560
+    y_cursor = 440
 
-    # 5. Dibujar Precio Anterior (Tachado)
+    # 4. Precio Antes (Tachado en Rojo)
     if precio_antes:
         texto_antes = f"{precio_antes}€"
         bbox = draw.textbbox((0, 0), texto_antes, font=font_antes)
@@ -262,25 +260,25 @@ def generar_imagen_banner(imagen_url, precio_oferta, precio_antes):
         x_text = (canvas_w - w_text) // 2
 
         draw.text((x_text, y_cursor), texto_antes, fill=(210, 40, 40, 255), font=font_antes)
-        line_y = y_cursor + (h_text // 2) + 12
-        draw.line([(x_text - 12, line_y), (x_text + w_text + 12, line_y)], fill=(210, 40, 40, 255), width=6)
-        y_cursor += 70
+        line_y = y_cursor + (h_text // 2) + 8
+        draw.line([(x_text - 8, line_y), (x_text + w_text + 8, line_y)], fill=(210, 40, 40, 255), width=5)
+        y_cursor += 55
 
-    # 6. Dibujar Botón Naranja Gigante con el Precio de Oferta
+    # 5. Botón Naranja de Oferta
     if precio_oferta:
         texto_oferta = f"{precio_oferta}€"
         bbox_of = draw.textbbox((0, 0), texto_oferta, font=font_oferta)
         w_of = bbox_of[2] - bbox_of[0]
         h_of = bbox_of[3] - bbox_of[1]
 
-        padding_x, padding_y = 60, 18
+        padding_x, padding_y = 50, 14
         rect_w = w_of + (padding_x * 2)
         rect_h = h_of + (padding_y * 2)
 
         rect_x = (canvas_w - rect_w) // 2
         rect_y = y_cursor
 
-        draw.rounded_rectangle([rect_x, rect_y, rect_x + rect_w, rect_y + rect_h], radius=24, fill=(255, 102, 0, 255))
+        draw.rounded_rectangle([rect_x, rect_y, rect_x + rect_w, rect_y + rect_h], radius=18, fill=(255, 102, 0, 255))
         
         text_x = rect_x + padding_x - bbox_of[0]
         text_y = rect_y + padding_y - bbox_of[1]
@@ -325,7 +323,6 @@ async def procesar_mensaje(update: Update, context: ContextTypes.DEFAULT_TYPE):
     titulo_final = titulo_manual or (datos.get("titulo") if datos else "Producto Pádel")
     imagen_url_original = datos.get("imagen_url") if datos else None
 
-    # Cálculo Porcentaje Descuento
     dto_str = ""
     if precio_oferta and precio_antes:
         try:
