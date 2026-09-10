@@ -144,28 +144,39 @@ def procesar_enlace_afiliado(url_original):
     return url_final, tienda, url_real
 
 # ==========================================
-# 5. DETECTOR VISUAL DE IMAGEN PLACEHOLDER
+# 5. DETECTOR Y FILTRO ESTRICTO DE IMAGEN
 # ==========================================
-def es_imagen_real_producto(bytes_img):
-    """
-    Descarga e inspecciona los píxeles de la imagen. 
-    Si es uniforme (todo gris/blanco) o el placeholder de 9 puntos, devuelve False.
-    """
+def es_imagen_valida_producto(url, bytes_img):
+    url_lower = url.lower()
+    
+    # Palabras prohibidas (métodos de pago, logos, iconos)
+    palabras_prohibidas = [
+        'payment', 'pago', 'visa', 'mastercard', 'paypal', 'sequra', 
+        'american', 'express', 'logo', 'icon', 'banner', 'footer', 
+        'header', 'sprite', 'badge', 'trust'
+    ]
+    if any(p in url_lower for p in palabras_prohibidas):
+        return False
+
     try:
         img = Image.open(io.BytesIO(bytes_img)).convert("RGB")
         w, h = img.size
-        if w < 120 or h < 120:
+        
+        # Dimensiones mínimas
+        if w < 200 or h < 200:
             return False
 
-        # Calcular la desviación estándar de color en la imagen
+        # Ratio de aspecto (descartar banners horizontales muy anchos de pago)
+        ratio = w / float(h)
+        if ratio > 1.8 or ratio < 0.4:
+            return False
+
+        # Desviación estándar de color (descartar imágenes grises/blancas planas)
         stat = ImageStat.Stat(img)
         desviacion_std = sum(stat.stddev) / len(stat.stddev)
-        
-        # Una imagen de producto real tiene contrastes altos (desviación > 25).
-        # El placeholder de puntos blancos y fondo gris tiene una variación casi nula.
-        if desviacion_std < 18:
+        if desviacion_std < 15:
             return False
-            
+
         return True
     except Exception:
         return False
@@ -176,7 +187,6 @@ def es_imagen_real_producto(bytes_img):
 def obtener_datos_padelnuestro(url_real):
     html_content = ""
     
-    # 1. Usar ScraperAPI para renderizar la página ejecutando JavaScript
     if SCRAPER_API_KEY:
         try:
             payload = {
@@ -205,14 +215,23 @@ def obtener_datos_padelnuestro(url_real):
 
     soup = BeautifulSoup(html_content, 'html.parser')
 
-    # Extraer Título
     titulo_elem = soup.find('meta', property='og:title') or soup.find('h1')
     titulo = titulo_elem.get_text().strip() if titulo_elem else "Producto Padel Nuestro"
 
-    # Coleccionar todas las posibles URLs de imagen del HTML
     candidatos_url = []
 
-    # A) Buscar en JSON-LD
+    # Prioridad 1: og:image
+    og_img = soup.find('meta', property='og:image')
+    if og_img and og_img.get('content'):
+        candidatos_url.append(og_img['content'])
+
+    # Prioridad 2: Imágenes de catálogo de Magento
+    for img in soup.find_all('img'):
+        src = img.get('src') or img.get('data-src') or img.get('data-original') or img.get('data-zoom-image')
+        if src and ('catalog/product' in src or 'media/catalog' in src):
+            candidatos_url.append(src)
+
+    # Prioridad 3: JSON-LD
     scripts = soup.find_all('script', type='application/ld+json')
     for s in scripts:
         try:
@@ -226,17 +245,6 @@ def obtener_datos_padelnuestro(url_real):
         except Exception:
             pass
 
-    # B) Buscar en etiquetas og:image
-    og_img = soup.find('meta', property='og:image')
-    if og_img and og_img.get('content'):
-        candidatos_url.append(og_img['content'])
-
-    # C) Buscar en tags <img> del catálogo
-    for img in soup.find_all('img'):
-        src = img.get('src') or img.get('data-src') or img.get('data-original')
-        if src and ('catalog/product' in src or 'media/' in src or 'images/' in src):
-            candidatos_url.append(src)
-
     imagen_valida_bytes = None
 
     for u in candidatos_url:
@@ -246,13 +254,12 @@ def obtener_datos_padelnuestro(url_real):
         if u.startswith('//'): u = 'https:' + u
         elif u.startswith('/'): u = 'https://www.padelnuestro.com' + u
 
-        # Forzar alta definición eliminando miniaturas de caché
         u = re.sub(r'-\d+x\d+\.', '.', u)
         u = re.sub(r'/cache/[^/]+/', '/image/', u)
 
         try:
             r_img = requests.get(u, timeout=8)
-            if r_img.status_code == 200 and es_imagen_real_producto(r_img.content):
+            if r_img.status_code == 200 and es_imagen_valida_producto(u, r_img.content):
                 imagen_valida_bytes = r_img.content
                 break
         except Exception:
@@ -274,8 +281,9 @@ def obtener_datos_padelmarket(url_real):
             
             img_bytes = None
             if imagen and imagen.get('content'):
-                r = requests.get(imagen['content'], timeout=8)
-                if r.status_code == 200 and es_imagen_real_producto(r.content):
+                u = imagen['content']
+                r = requests.get(u, timeout=8)
+                if r.status_code == 200 and es_imagen_valida_producto(u, r.content):
                     img_bytes = r.content
 
             return {
@@ -312,8 +320,9 @@ def obtener_datos_amazon(url_real):
         
         img_bytes = None
         if imagen and 'src' in imagen.attrs:
-            r = requests.get(imagen['src'], timeout=8)
-            if r.status_code == 200 and es_imagen_real_producto(r.content):
+            u = imagen['src']
+            r = requests.get(u, timeout=8)
+            if r.status_code == 200 and es_imagen_valida_producto(u, r.content):
                 img_bytes = r.content
 
         return {
@@ -323,7 +332,7 @@ def obtener_datos_amazon(url_real):
     return None
 
 # ==========================================
-# 7. GENERADOR GRÁFICO (DEGRADADO MÁS MARCADO)
+# 7. GENERADOR GRÁFICO (DEGRADADO MARCADO)
 # ==========================================
 def recortar_bordes_blancos(img):
     img_rgb = img.convert("RGB")
@@ -336,16 +345,13 @@ def recortar_bordes_blancos(img):
     return img
 
 def crear_fondo_degradado_marcado(width, height):
-    """
-    Crea un degradado azulado-grisáceo mucho más pronunciado para dar contraste.
-    """
-    color_inicio = (255, 255, 255) # Blanco puro arriba
-    color_fin = (160, 174, 192)    # Gris/Azulado visible abajo
+    color_inicio = (255, 255, 255)
+    color_fin = (160, 174, 192)
     
     base = Image.new("RGBA", (width, height), (255, 255, 255, 255))
     draw = ImageDraw.Draw(base)
     for y in range(height):
-        factor = (y / height) ** 1.2  # Curva para oscurecer más el fondo inferior
+        factor = (y / height) ** 1.2
         r = int(color_inicio[0] + (color_fin[0] - color_inicio[0]) * factor)
         g = int(color_inicio[1] + (color_fin[1] - color_inicio[1]) * factor)
         b = int(color_inicio[2] + (color_fin[2] - color_inicio[2]) * factor)
@@ -514,7 +520,6 @@ async def procesar_mensaje(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 reply_markup=keyboard
             )
         else:
-            # Si no hay imagen válida del producto, se envía en formato mensaje limpio sin cuadro gris
             await context.bot.send_message(
                 chat_id=CANAL_ID,
                 text=caption,
