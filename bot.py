@@ -178,11 +178,10 @@ def es_imagen_valida_producto(url, bytes_img):
         return False
 
 # ==========================================
-# 6. SCRAPERS ESPECÍFICOS
+# 6. SCRAPERS ESPECÍFICOS (PADELNUESTRO, PADELMARKET, AMAZON)
 # ==========================================
 def obtener_datos_padelnuestro(url_real):
     html_content = ""
-    
     if SCRAPER_API_KEY:
         try:
             payload = {
@@ -210,12 +209,10 @@ def obtener_datos_padelnuestro(url_real):
         return None
 
     soup = BeautifulSoup(html_content, 'html.parser')
-
     titulo_elem = soup.find('meta', property='og:title') or soup.find('h1')
     titulo = titulo_elem.get_text().strip() if titulo_elem else "Producto Padel Nuestro"
 
     candidatos_url = []
-
     og_img = soup.find('meta', property='og:image')
     if og_img and og_img.get('content'):
         candidatos_url.append(og_img['content'])
@@ -244,7 +241,6 @@ def obtener_datos_padelnuestro(url_real):
     for u in candidatos_url:
         if not u or 'data:image' in u: 
             continue
-
         if u.startswith('//'): u = 'https:' + u
         elif u.startswith('/'): u = 'https://www.padelnuestro.com' + u
 
@@ -290,40 +286,101 @@ def obtener_datos_padelmarket(url_real):
 
 def obtener_datos_amazon(url_real):
     html_content = ""
-    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
-    try:
-        resp = requests.get(url_real, headers=headers, timeout=10)
-        if resp.status_code == 200 and "captcha" not in resp.text.lower():
-            html_content = resp.text
-    except Exception:
-        pass
-
-    if not html_content and SCRAPER_API_KEY:
-        payload = {'api_key': SCRAPER_API_KEY, 'url': url_real, 'country_code': 'es'}
+    
+    if SCRAPER_API_KEY:
         try:
-            r = requests.get('http://api.scraperapi.com', params=payload, timeout=25)
-            if r.status_code == 200:
+            payload = {
+                'api_key': SCRAPER_API_KEY, 
+                'url': url_real, 
+                'render': 'true',
+                'country_code': 'es'
+            }
+            r = requests.get('http://api.scraperapi.com', params=payload, timeout=35)
+            if r.status_code == 200 and "captcha" not in r.text.lower():
                 html_content = r.text
         except Exception:
             pass
 
-    if html_content:
-        soup = BeautifulSoup(html_content, 'html.parser')
-        titulo = soup.find(id="productTitle")
-        imagen = soup.find(id="landingImage")
-        
-        img_bytes = None
-        if imagen and 'src' in imagen.attrs:
-            u = imagen['src']
-            r = requests.get(u, timeout=8)
-            if r.status_code == 200 and es_imagen_valida_producto(u, r.content):
-                img_bytes = r.content
-
-        return {
-            "titulo": titulo.get_text().strip() if titulo else "Producto Amazon",
-            "imagen_bytes": img_bytes
+    if not html_content:
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+            'Accept-Language': 'es-ES,es;q=0.9',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8'
         }
-    return None
+        try:
+            resp = requests.get(url_real, headers=headers, timeout=12)
+            if resp.status_code == 200 and "captcha" not in resp.text.lower():
+                html_content = resp.text
+        except Exception:
+            pass
+
+    if not html_content:
+        return None
+
+    soup = BeautifulSoup(html_content, 'html.parser')
+    
+    titulo = None
+    titulo_elem = soup.find(id="productTitle")
+    if titulo_elem:
+        titulo = titulo_elem.get_text().strip()
+    else:
+        og_title = soup.find('meta', property='og:title')
+        if og_title:
+            titulo = og_title.get('content')
+            
+    titulo_final = titulo if titulo else "Producto Amazon"
+
+    candidatos_img = []
+    og_image = soup.find('meta', property='og:image')
+    if og_image and og_image.get('content'):
+        candidatos_img.append(og_image['content'])
+
+    landing_img = soup.find(id="landingImage") or soup.find(id="imgBlkFront")
+    if landing_img:
+        for attr in ['data-old-hires', 'data-a-dynamic-image', 'src']:
+            val = landing_img.get(attr)
+            if val:
+                if attr == 'data-a-dynamic-image':
+                    try:
+                        dict_imgs = json.loads(val.replace('&quot;', '"'))
+                        for img_url in dict_imgs.keys():
+                            candidatos_img.append(img_url)
+                    except Exception:
+                        pass
+                else:
+                    candidatos_img.append(val)
+
+    img_block = soup.find('div', id='imageBlock') or soup.find('div', id='main-image-container')
+    if img_block:
+        for img in img_block.find_all('img'):
+            src = img.get('src')
+            if src:
+                candidatos_img.append(src)
+
+    imagen_valida_bytes = None
+    headers_img = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
+
+    for u in candidatos_img:
+        if not u or 'data:image' in u or 'transparent-pixel' in u:
+            continue
+            
+        u_limpia = re.sub(r'\._AC_SR\d+,\d+_', '', u)
+        u_limpia = re.sub(r'\._AC_UY\d+_', '', u_limpia)
+        u_limpia = re.sub(r'\._AC_UL\d+_', '', u_limpia)
+        u_limpia = re.sub(r'\._[A-Z0-9_,]+_\.', '.', u_limpia)
+
+        try:
+            r_img = requests.get(u_limpia, headers=headers_img, timeout=8)
+            if r_img.status_code == 200 and es_imagen_valida_producto(u_limpia, r_img.content):
+                imagen_valida_bytes = r_img.content
+                break
+        except Exception:
+            continue
+
+    return {
+        "titulo": titulo_final,
+        "imagen_bytes": imagen_valida_bytes
+    }
 
 # ==========================================
 # 7. RECORTE DE MARGENES BLANCOS SEGURO (AUTOCROP)
@@ -561,7 +618,6 @@ async def procesar_mensaje(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 def main():
     application = Application.builder().token(TELEGRAM_TOKEN).build()
-    # Acepta tanto mensajes directos como reenviados/compartidos de canales
     application.add_handler(MessageHandler((filters.TEXT | filters.FORWARDED) & ~filters.COMMAND, procesar_mensaje))
     application.run_polling()
 
