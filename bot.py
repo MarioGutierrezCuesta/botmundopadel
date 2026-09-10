@@ -183,7 +183,6 @@ def es_imagen_valida_producto(url, bytes_img):
 def obtener_datos_padelnuestro(url_real):
     html_content = ""
     
-    # PadelNuestro requiere ScraperAPI obligatoriamente para evitar bloqueos Cloudflare
     if SCRAPER_API_KEY:
         try:
             payload = {
@@ -198,7 +197,6 @@ def obtener_datos_padelnuestro(url_real):
         except Exception:
             pass
 
-    # Fallback a petición normal por si ScraperAPI falla
     if not html_content:
         headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'}
         try:
@@ -470,7 +468,11 @@ async def asegurar_logo_local(context: ContextTypes.DEFAULT_TYPE):
             pass
 
 async def procesar_mensaje(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    texto = update.message.text
+    mensaje_actual = update.message or update.channel_post
+    if not mensaje_actual:
+        return
+
+    texto = mensaje_actual.text or mensaje_actual.caption
     if not texto:
         return
 
@@ -484,7 +486,7 @@ async def procesar_mensaje(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     urls = re.findall(r'https?://[^\s]+', url_input)
     if not urls:
-        await update.message.reply_text("❌ No se encontró ningún enlace válido.")
+        await mensaje_actual.reply_text("❌ No se encontró ningún enlace válido en el mensaje recibido.")
         return
 
     url_original = urls[0]
@@ -499,7 +501,7 @@ async def procesar_mensaje(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif tienda == "AMAZON":
             datos = obtener_datos_amazon(url_scraping)
     except Exception as e:
-        await update.message.reply_text(f"⚠️ Aviso al extraer datos: {str(e)}")
+        await mensaje_actual.reply_text(f"⚠️ Aviso al extraer datos: {str(e)}")
 
     titulo_final = titulo_manual or (datos.get("titulo") if datos else "Producto Pádel")
     imagen_bytes = datos.get("imagen_bytes") if datos else None
@@ -532,7 +534,7 @@ async def procesar_mensaje(update: Update, context: ContextTypes.DEFAULT_TYPE):
         try:
             foto_banner = generar_imagen_banner(imagen_bytes, precio_oferta, precio_antes)
         except Exception as e:
-            await update.message.reply_text(f"⚠️ Error al crear banner: {str(e)}. Se publicará solo texto.")
+            await mensaje_actual.reply_text(f"⚠️ Error al crear banner: {str(e)}. Se publicará solo texto.")
 
     try:
         if foto_banner:
@@ -543,7 +545,7 @@ async def procesar_mensaje(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 parse_mode="Markdown",
                 reply_markup=keyboard
             )
-            await update.message.reply_text(f"✅ ¡Anuncio con BANNER de **{tienda}** publicado!")
+            await mensaje_actual.reply_text(f"✅ ¡Anuncio con BANNER de **{tienda}** publicado en el canal!")
         else:
             await context.bot.send_message(
                 chat_id=CANAL_ID,
@@ -552,14 +554,15 @@ async def procesar_mensaje(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 reply_markup=keyboard,
                 disable_web_page_preview=False
             )
-            await update.message.reply_text(f"✅ ¡Anuncio (solo texto) de **{tienda}** publicado! (No se pudo procesar la foto).")
+            await mensaje_actual.reply_text(f"✅ ¡Anuncio (solo texto) de **{tienda}** publicado! (No se pudo procesar la foto).")
             
     except Exception as e:
-        await update.message.reply_text(f"❌ Error al publicar en Telegram: {str(e)}")
+        await mensaje_actual.reply_text(f"❌ Error al publicar en Telegram: {str(e)}")
 
 def main():
     application = Application.builder().token(TELEGRAM_TOKEN).build()
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, procesar_mensaje))
+    # Acepta tanto mensajes directos como reenviados/compartidos de canales
+    application.add_handler(MessageHandler((filters.TEXT | filters.FORWARDED) & ~filters.COMMAND, procesar_mensaje))
     application.run_polling()
 
 if __name__ == '__main__':
