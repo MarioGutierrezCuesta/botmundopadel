@@ -164,7 +164,7 @@ def es_imagen_valida_producto(url, bytes_img):
     palabras_prohibidas = [
         'payment', 'pago', 'visa', 'mastercard', 'paypal', 'sequra', 
         'american', 'express', 'logo', 'icon', 'banner', 'footer', 
-        'header', 'sprite', 'badge', 'trust'
+        'header', 'sprite', 'badge', 'trust', 'placeholder'
     ]
     if any(p in url_lower for p in palabras_prohibidas):
         return False
@@ -189,6 +189,12 @@ def es_imagen_valida_producto(url, bytes_img):
 # ==========================================
 def obtener_datos_padelnuestro(url_real):
     html_content = ""
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
+        'Referer': 'https://www.padelnuestro.com/'
+    }
+
     if SCRAPER_API_KEY:
         try:
             payload = {
@@ -204,7 +210,6 @@ def obtener_datos_padelnuestro(url_real):
             pass
 
     if not html_content:
-        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
         try:
             r = requests.get(url_real, headers=headers, timeout=12)
             if r.status_code == 200:
@@ -216,8 +221,9 @@ def obtener_datos_padelnuestro(url_real):
         return None
 
     soup = BeautifulSoup(html_content, 'html.parser')
+    
     titulo_elem = soup.find('meta', property='og:title') or soup.find('h1')
-    titulo = titulo_elem.get_text().strip() if titulo_elem else "Producto Padel Nuestro"
+    titulo = titulo_elem.get('content') if (titulo_elem and titulo_elem.get('content')) else (titulo_elem.get_text().strip() if titulo_elem else "Producto Padel Nuestro")
 
     candidatos_url = []
     og_img = soup.find('meta', property='og:image')
@@ -226,27 +232,41 @@ def obtener_datos_padelnuestro(url_real):
 
     for img in soup.find_all('img'):
         src = img.get('src') or img.get('data-src') or img.get('data-original')
-        if src and ('catalog/product' in src or 'media/catalog' in src):
+        if src and ('catalog/product' in src or 'media/catalog' in src or 'images' in src):
             candidatos_url.append(src)
 
     imagen_valida_bytes = None
-    headers_img = {'User-Agent': 'Mozilla/5.0'}
+    headers_img = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+        'Referer': 'https://www.padelnuestro.com/',
+        'Accept': 'image/avif,image/webp,image/apng,image/*,*/*;q=0.8'
+    }
 
     for u in candidatos_url:
-        if not u or 'data:image' in u: continue
-        if u.startswith('//'): u = 'https:' + u
-        elif u.startswith('/'): u = 'https://www.padelnuestro.com' + u
-
-        u = re.sub(r'-\d+x\d+\.', '.', u)
-        u = re.sub(r'/cache/[^/]+/', '/image/', u)
+        if not u or 'data:image' in u or 'placeholder' in u: 
+            continue
+        if u.startswith('//'): 
+            u = 'https:' + u
+        elif u.startswith('/'): 
+            u = 'https://www.padelnuestro.com' + u
 
         try:
-            r_img = requests.get(u, headers=headers_img, timeout=8)
+            r_img = requests.get(u, headers=headers_img, timeout=10)
             if r_img.status_code == 200 and es_imagen_valida_producto(u, r_img.content):
                 imagen_valida_bytes = r_img.content
                 break
         except Exception:
-            continue
+            pass
+
+        if not imagen_valida_bytes and SCRAPER_API_KEY:
+            try:
+                payload_img = {'api_key': SCRAPER_API_KEY, 'url': u}
+                r_img_proxy = requests.get('http://api.scraperapi.com', params=payload_img, timeout=20)
+                if r_img_proxy.status_code == 200 and es_imagen_valida_producto(u, r_img_proxy.content):
+                    imagen_valida_bytes = r_img_proxy.content
+                    break
+            except Exception:
+                continue
 
     return {"titulo": titulo, "imagen_bytes": imagen_valida_bytes}
 
@@ -382,7 +402,6 @@ def crear_fondo_degradado_blanco_a_azul(width, height):
     base = Image.new("RGBA", (width, height), (255, 255, 255, 255))
     draw = ImageDraw.Draw(base)
     
-    # Blanco puro arriba (45% superior) para invisibilizar marcos de foto
     for y in range(height):
         if y < int(height * 0.45):
             r, g, b = color_blanco
@@ -410,7 +429,7 @@ def generar_imagen_banner(imagen_bytes, precio_oferta, precio_antes):
     canvas_w, canvas_h = 800, 800
     canvas = crear_fondo_degradado_blanco_a_azul(canvas_w, canvas_h)
 
-    # Posicionamiento del producto en la parte superior blanca
+    # Posicionamiento del producto
     max_w, max_h = 680, 450
     img_producto.thumbnail((max_w, max_h), Image.Resampling.LANCZOS)
     x_pos = (canvas_w - img_producto.width) // 2
@@ -419,7 +438,7 @@ def generar_imagen_banner(imagen_bytes, precio_oferta, precio_antes):
 
     draw = ImageDraw.Draw(canvas)
 
-    # Marcador de Logo de Marca en la esquina inferior izquierda
+    # Marcador de Logo
     if os.path.exists(LOGO_PATH):
         try:
             logo = Image.open(LOGO_PATH).convert("RGBA")
@@ -432,14 +451,12 @@ def generar_imagen_banner(imagen_bytes, precio_oferta, precio_antes):
         except Exception:
             pass
 
-    # Carga de tipografía limpia (Roboto)
     font_oferta = cargar_fuente_gigante(tamano=90, es_bold=True)
     font_antes = cargar_fuente_gigante(tamano=58, es_bold=True)
 
-    # Formateo asegurando codificación UTF-8 para el símbolo €
     str_euro = "€"
 
-    # Precio original tachado en rojo
+    # Precio original tachado
     if precio_antes:
         p_ant_limpio = str(precio_antes).replace('€', '').strip()
         texto_antes = f"{p_ant_limpio}{str_euro}"
@@ -454,7 +471,7 @@ def generar_imagen_banner(imagen_bytes, precio_oferta, precio_antes):
         line_y = y_ant + (h_ant // 2) + 3
         draw.line([(x_ant - 14, line_y), (x_ant + w_ant + 14, line_y)], fill=(205, 32, 32, 255), width=7)
 
-    # Precio en oferta destacado dentro de una caja con bordes redondeados
+    # Precio en oferta
     if precio_oferta:
         p_of_limpio = str(precio_oferta).replace('€', '').strip()
         texto_oferta = f"{p_of_limpio}{str_euro}"
@@ -469,7 +486,6 @@ def generar_imagen_banner(imagen_bytes, precio_oferta, precio_antes):
         rect_x = (canvas_w - rect_w) // 2
         rect_y = 595
         
-        # Pastilla en tono naranja brillante idéntica a la imagen de referencia
         draw.rounded_rectangle([rect_x, rect_y, rect_x + rect_w, rect_y + rect_h], radius=24, fill=(255, 90, 0, 255))
         
         text_x = rect_x + pad_x - bbox_of[0]
