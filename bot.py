@@ -6,7 +6,7 @@ import threading
 import requests
 from urllib.parse import quote, unquote
 from bs4 import BeautifulSoup
-from PIL import Image, ImageDraw, ImageFont, ImageChops, ImageStat
+from PIL import Image, ImageDraw, ImageFont, ImageChops
 from flask import Flask
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, MessageHandler, filters, ContextTypes
@@ -17,7 +17,6 @@ from telegram.ext import Application, MessageHandler, filters, ContextTypes
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN", "8801288601:AAGjU2UNrzNurMg1XGVdL_tWjrLqIcRBWUc")
 SCRAPER_API_KEY = os.environ.get("SCRAPER_API_KEY", "fc389bd2dcdb6a12d0c7d839b0d4cf58")
 
-# Canal de destino corregido sin guiones bajos
 CANAL_ID = "@MundoPadelEsp"
 
 TAG_AMAZON = "mundopadel09a-21" 
@@ -46,12 +45,14 @@ def run_web():
 threading.Thread(target=run_web, daemon=True).start()
 
 # ==========================================
-# 3. CARGA DE FUENTES TIPOGRÁFICAS
+# 3. CARGA DE FUENTES TIPOGRÁFICAS (CORREGIDA)
 # ==========================================
-def cargar_fuente_gigante(tamano=60, es_bold=True):
+def cargar_fuente_gigante(tamano=100, es_bold=True):
     nombre_archivo = "OpenSans-Bold.ttf" if es_bold else "OpenSans-Regular.ttf"
+    
+    # Descarga desde mirror directo de GitHub
     if not os.path.exists(nombre_archivo):
-        url = f"https://github.com/google/fonts/raw/main/ofl/opensans/{nombre_archivo}"
+        url = f"https://raw.githubusercontent.com/google/fonts/main/ofl/opensans/{nombre_archivo}"
         try:
             r = requests.get(url, timeout=10)
             if r.status_code == 200:
@@ -66,7 +67,11 @@ def cargar_fuente_gigante(tamano=60, es_bold=True):
         except Exception:
             pass
 
-    return ImageFont.load_default()
+    # Soporte de tamaño para versiones recientes de Pillow o fallback
+    try:
+        return ImageFont.load_default(size=tamano)
+    except TypeError:
+        return ImageFont.load_default()
 
 # ==========================================
 # 4. TRATAMIENTO DE ENLACES Y AFILIACIÓN
@@ -377,7 +382,7 @@ def crear_fondo_degradado_ejemplo(width, height):
     return base
 
 # ==========================================
-# 8. GENERADOR GRÁFICO 
+# 8. GENERADOR GRÁFICO (PRECIOS GIGANTES)
 # ==========================================
 def generar_imagen_banner(imagen_bytes, precio_oferta, precio_antes):
     if not imagen_bytes: return None
@@ -391,10 +396,11 @@ def generar_imagen_banner(imagen_bytes, precio_oferta, precio_antes):
     canvas_w, canvas_h = 800, 800
     canvas = crear_fondo_degradado_ejemplo(canvas_w, canvas_h)
 
-    max_w, max_h = 680, 500
+    # Ajuste de producto para dejar espacio a los precios grandes abajo
+    max_w, max_h = 680, 440
     img_producto.thumbnail((max_w, max_h), Image.Resampling.LANCZOS)
     x_pos = (canvas_w - img_producto.width) // 2
-    y_pos = (500 - img_producto.height) // 2 + 10
+    y_pos = (450 - img_producto.height) // 2 + 10
     canvas.paste(img_producto, (x_pos, y_pos), img_producto)
 
     draw = ImageDraw.Draw(canvas)
@@ -402,41 +408,47 @@ def generar_imagen_banner(imagen_bytes, precio_oferta, precio_antes):
     if os.path.exists(LOGO_PATH):
         try:
             logo = Image.open(LOGO_PATH).convert("RGBA")
-            logo.thumbnail((80, 80), Image.Resampling.LANCZOS)
+            logo.thumbnail((90, 90), Image.Resampling.LANCZOS)
             mask = Image.new('L', logo.size, 0)
             draw_mask = ImageDraw.Draw(mask)
             draw_mask.ellipse((0, 0, logo.size[0], logo.size[1]), fill=255)
-            draw.ellipse((35, 675, 35 + logo.size[0] + 8, 675 + logo.size[1] + 8), fill=(255, 255, 255, 255), outline=(210, 225, 220, 255), width=2)
-            canvas.paste(logo, (39, 679), mask)
+            draw.ellipse((30, 660, 30 + logo.size[0] + 8, 660 + logo.size[1] + 8), fill=(255, 255, 255, 255), outline=(210, 225, 220, 255), width=2)
+            canvas.paste(logo, (34, 664), mask)
         except Exception:
             pass
 
-    font_oferta = cargar_fuente_gigante(tamano=70, es_bold=True)
-    font_antes = cargar_fuente_gigante(tamano=45, es_bold=False)
+    # Carga de fuentes con tamaños muy destacados
+    font_oferta = cargar_fuente_gigante(tamano=110, es_bold=True)
+    font_antes = cargar_fuente_gigante(tamano=65, es_bold=False)
 
+    # Precio original (Tachado en rojo)
     if precio_antes:
         texto_antes = f"{precio_antes}€"
         bbox_ant = draw.textbbox((0, 0), texto_antes, font=font_antes)
         w_ant = bbox_ant[2] - bbox_ant[0]
         h_ant = bbox_ant[3] - bbox_ant[1]
         x_ant = (canvas_w - w_ant) // 2
-        y_ant = 520
+        y_ant = 490
         draw.text((x_ant, y_ant), texto_antes, fill=(200, 30, 30, 255), font=font_antes)
         
-        line_y = y_ant + (h_ant // 2) + 2
-        draw.line([(x_ant - 12, line_y), (x_ant + w_ant + 12, line_y)], fill=(200, 30, 30, 255), width=5)
+        line_y = y_ant + (h_ant // 2) + 4
+        draw.line([(x_ant - 15, line_y), (x_ant + w_ant + 15, line_y)], fill=(200, 30, 30, 255), width=8)
 
+    # Precio oferta (Enorme en pastilla naranja)
     if precio_oferta:
         texto_oferta = f"{precio_oferta}€"
         bbox_of = draw.textbbox((0, 0), texto_oferta, font=font_oferta)
         w_of = bbox_of[2] - bbox_of[0]
         h_of = bbox_of[3] - bbox_of[1]
-        pad_x, pad_y = 45, 18
+        
+        pad_x, pad_y = 50, 20
         rect_w = w_of + (pad_x * 2)
         rect_h = h_of + (pad_y * 2)
-        rect_x = canvas_w - rect_w - 40
-        rect_y = 620
-        draw.rounded_rectangle([rect_x, rect_y, rect_x + rect_w, rect_y + rect_h], radius=22, fill=(255, 102, 0, 255))
+        
+        rect_x = (canvas_w - rect_w) // 2
+        rect_y = 600
+        
+        draw.rounded_rectangle([rect_x, rect_y, rect_x + rect_w, rect_y + rect_h], radius=28, fill=(255, 102, 0, 255))
         text_x = rect_x + pad_x - bbox_of[0]
         text_y = rect_y + pad_y - bbox_of[1]
         draw.text((text_x, text_y), texto_oferta, fill=(255, 255, 255, 255), font=font_oferta)
