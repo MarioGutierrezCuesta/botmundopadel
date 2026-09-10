@@ -163,16 +163,34 @@ def obtener_datos_padelmarket(url_real):
     return None
 
 def obtener_datos_padelnuestro(url_real):
-    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
+    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'}
     try:
         resp = requests.get(url_real, headers=headers, timeout=12)
         if resp.status_code == 200:
             soup = BeautifulSoup(resp.text, 'html.parser')
             titulo = soup.find('meta', property='og:title')
-            imagen = soup.find('meta', property='og:image')
+            
+            img_url = None
+            # 1. Buscar en las etiquetas meta og:image
+            imagen_meta = soup.find('meta', property='og:image')
+            if imagen_meta:
+                img_url = imagen_meta['content']
+            
+            # 2. Si no hay og:image, buscar la imagen del producto en el DOM
+            if not img_url:
+                img_tag = soup.find('img', {'id': 'image-main'}) or soup.find('img', {'class': 'gallery-placeholder__image'})
+                if img_tag and 'src' in img_tag.attrs:
+                    img_url = img_tag['src']
+
+            # Fix PadelNuestro: Forzar la extracción de la imagen HD sin dimensiones pequeñas
+            if img_url:
+                # Reemplaza los sufijos de dimensiones tipo -150x150, -300x300, /cache/ por alta resolución
+                img_url = re.sub(r'-\d+x\d+\.', '.', img_url)
+                img_url = re.sub(r'/cache/[^/]+/', '/image/', img_url)
+
             return {
                 "titulo": titulo['content'] if titulo else "Producto Padel Nuestro",
-                "imagen_url": imagen['content'] if imagen else None
+                "imagen_url": img_url
             }
     except Exception:
         pass
@@ -208,7 +226,7 @@ def obtener_datos_amazon(url_real):
     return None
 
 # ==========================================
-# 6. GENERADOR GRÁFICO CON DEGRADADO Y LOGO PEQUEÑO
+# 6. GENERADOR GRÁFICO (CON ESCALADO FORZADO PARA IMÁGENES PEQUEÑAS)
 # ==========================================
 def recortar_bordes_blancos(img):
     img_rgb = img.convert("RGB")
@@ -220,8 +238,7 @@ def recortar_bordes_blancos(img):
         return img.crop(bbox)
     return img
 
-def crear_fondo_degradado(width, height, color_inicio=(255, 255, 255), color_fin=(240, 244, 248)):
-    """Genera una imagen con degradado vertical suave desde blanco hacia azulado claro"""
+def crear_fondo_degradado(width, height, color_inicio=(255, 255, 255), color_fin=(226, 232, 240)):
     base = Image.new("RGBA", (width, height), (255, 255, 255, 255))
     draw = ImageDraw.Draw(base)
     for y in range(height):
@@ -240,11 +257,17 @@ def generar_imagen_banner(imagen_url, precio_oferta, precio_antes):
 
     img_producto = recortar_bordes_blancos(img_producto)
 
-    # 1. Canvas con Degradado Suave de Fondo (800x800 px)
+    # Si la imagen obtenida es enana (menos de 350px), la forzamos a crecer primero
+    if img_producto.width < 350 or img_producto.height < 350:
+        factor_escala = max(500 / img_producto.width, 500 / img_producto.height)
+        nuevo_w = int(img_producto.width * factor_escala)
+        nuevo_h = int(img_producto.height * factor_escala)
+        img_producto = img_producto.resize((nuevo_w, nuevo_h), Image.Resampling.LANCZOS)
+
     canvas_w, canvas_h = 800, 800
     canvas = crear_fondo_degradado(canvas_w, canvas_h)
 
-    # 2. Redimensionar y centrar el producto en la parte superior
+    # Redimensionado proporcional al cuadro del banner
     max_w, max_h = 600, 460
     img_producto.thumbnail((max_w, max_h), Image.Resampling.LANCZOS)
     
@@ -252,23 +275,28 @@ def generar_imagen_banner(imagen_url, precio_oferta, precio_antes):
     y_pos = (480 - img_producto.height) // 2 + 10
     canvas.paste(img_producto, (x_pos, y_pos), img_producto)
 
-    # 3. Insertar Logo Pequeño Discreto (Esquina Inferior Izquierda)
+    draw = ImageDraw.Draw(canvas)
+
+    # Estampar logo
     if os.path.exists(LOGO_PATH):
         try:
             logo = Image.open(LOGO_PATH).convert("RGBA")
-            logo.thumbnail((70, 70), Image.Resampling.LANCZOS)
+            size = (80, 80)
+            logo.thumbnail(size, Image.Resampling.LANCZOS)
             
-            # Pegar el logo en la esquina con margen
-            canvas.paste(logo, (35, 680), logo)
+            mask = Image.new('L', logo.size, 0)
+            draw_mask = ImageDraw.Draw(mask)
+            draw_mask.ellipse((0, 0, logo.size[0], logo.size[1]), fill=255)
+            
+            draw.ellipse((35, 675, 35 + logo.size[0] + 8, 675 + logo.size[1] + 8), fill=(255, 255, 255, 255), outline=(210, 215, 220, 255), width=2)
+            canvas.paste(logo, (39, 679), mask)
         except Exception:
             pass
-
-    draw = ImageDraw.Draw(canvas)
 
     font_oferta = cargar_fuente_gigante(tamano=70, es_bold=True)
     font_antes = cargar_fuente_gigante(tamano=45, es_bold=False)
 
-    # 4. Precio Anterior Tachado (Centrado)
+    # Precio Anterior Tachado
     if precio_antes:
         texto_antes = f"{precio_antes}€"
         bbox_ant = draw.textbbox((0, 0), texto_antes, font=font_antes)
@@ -281,7 +309,7 @@ def generar_imagen_banner(imagen_url, precio_oferta, precio_antes):
         line_y = y_ant + (h_ant // 2) + 2
         draw.line([(x_ant - 12, line_y), (x_ant + w_ant + 12, line_y)], fill=(200, 30, 30, 255), width=5)
 
-    # 5. Botón Naranja Gigante con el Precio Final (Derecha Abajo)
+    # Botón Naranja
     if precio_oferta:
         texto_oferta = f"{precio_oferta}€"
         bbox_of = draw.textbbox((0, 0), texto_oferta, font=font_oferta)
@@ -313,10 +341,22 @@ def generar_imagen_banner(imagen_url, precio_oferta, precio_antes):
 # ==========================================
 # 7. MANEJADOR Y PUBLICADOR DE TELEGRAM
 # ==========================================
+async def asegurar_logo_local(context: ContextTypes.DEFAULT_TYPE):
+    if not os.path.exists(LOGO_PATH):
+        try:
+            chat = await context.bot.get_chat(CANAL_ID)
+            if chat.photo:
+                file = await context.bot.get_file(chat.photo.big_file_id)
+                await file.download_to_drive(LOGO_PATH)
+        except Exception:
+            pass
+
 async def procesar_mensaje(update: Update, context: ContextTypes.DEFAULT_TYPE):
     texto = update.message.text
     if not texto:
         return
+
+    await asegurar_logo_local(context)
 
     partes = [p.strip() for p in texto.split('|')]
     url_input = partes[0]
