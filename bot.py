@@ -149,7 +149,6 @@ def procesar_enlace_afiliado(url_original):
 def es_imagen_valida_producto(url, bytes_img):
     url_lower = url.lower()
     
-    # Palabras prohibidas (métodos de pago, logos, iconos, footers)
     palabras_prohibidas = [
         'payment', 'pago', 'visa', 'mastercard', 'paypal', 'sequra', 
         'american', 'express', 'logo', 'icon', 'banner', 'footer', 
@@ -162,16 +161,13 @@ def es_imagen_valida_producto(url, bytes_img):
         img = Image.open(io.BytesIO(bytes_img)).convert("RGB")
         w, h = img.size
         
-        # Dimensiones mínimas
         if w < 200 or h < 200:
             return False
 
-        # Ratio de aspecto (descartar banners horizontales anchos de pago)
         ratio = w / float(h)
         if ratio > 1.8 or ratio < 0.4:
             return False
 
-        # Desviación estándar de color
         stat = ImageStat.Stat(img)
         desviacion_std = sum(stat.stddev) / len(stat.stddev)
         if desviacion_std < 15:
@@ -220,18 +216,15 @@ def obtener_datos_padelnuestro(url_real):
 
     candidatos_url = []
 
-    # Prioridad 1: og:image
     og_img = soup.find('meta', property='og:image')
     if og_img and og_img.get('content'):
         candidatos_url.append(og_img['content'])
 
-    # Prioridad 2: Imágenes de catálogo de Magento
     for img in soup.find_all('img'):
         src = img.get('src') or img.get('data-src') or img.get('data-original') or img.get('data-zoom-image')
         if src and ('catalog/product' in src or 'media/catalog' in src):
             candidatos_url.append(src)
 
-    # Prioridad 3: JSON-LD
     scripts = soup.find_all('script', type='application/ld+json')
     for s in scripts:
         try:
@@ -332,14 +325,38 @@ def obtener_datos_amazon(url_real):
     return None
 
 # ==========================================
-# 7. GENERADOR GRÁFICO (DEGRADADO BLANCO A MENTA)
+# 7. RECORTE DE MARGENES BLANCOS (AUTOCROP)
+# ==========================================
+def recortar_espacio_blanco(img):
+    """
+    Elimina los márgenes blancos sobrantes alrededor del producto.
+    Esto soluciona el problema de las fotos pequeñas de PadelNuestro.
+    """
+    try:
+        img_rgb = img.convert("RGB")
+        fondo_blanco = Image.new("RGB", img_rgb.size, (255, 255, 255))
+        diferencia = ImageChops.difference(img_rgb, fondo_blanco).convert("L")
+        
+        # Umbral para detectar píxeles que no son blanco puro
+        mascara = diferencia.point(lambda p: 255 if p > 12 else 0)
+        bbox = mascara.getbbox()
+        
+        if bbox:
+            # Añadimos un pequeño margen de seguridad de 10px
+            w, h = img.size
+            x1 = max(0, bbox[0] - 10)
+            y1 = max(0, bbox[1] - 10)
+            x2 = min(w, bbox[2] + 10)
+            y2 = min(h, bbox[3] + 10)
+            return img.crop((x1, y1, x2, y2))
+    except Exception:
+        pass
+    return img
+
+# ==========================================
+# 8. GENERADOR GRÁFICO (DEGRADADO BLANCO A MENTA)
 # ==========================================
 def crear_fondo_degradado_ejemplo(width, height):
-    """
-    Mantiene la mitad superior totalmente blanca (#FFFFFF) para disimular 
-    los recuadros blancos de los JPGs de producto, y pasa a un tono 
-    verde/menta suave en la parte inferior.
-    """
     color_blanco = (255, 255, 255)
     color_menta = (220, 245, 235)
     
@@ -369,17 +386,19 @@ def generar_imagen_banner(imagen_bytes, precio_oferta, precio_antes):
     except Exception:
         return None
 
+    # RECORTAR BORDES BLANCOS EXTRA DE PADELNUESTRO
+    img_producto = recortar_espacio_blanco(img_producto)
+
     canvas_w, canvas_h = 800, 800
     canvas = crear_fondo_degradado_ejemplo(canvas_w, canvas_h)
 
-    # Escalado de la imagen manteniendo dimensiones originales
-    max_w, max_h = 620, 480
+    # Ahora que no hay margenes vacíos, escalamos el producto para que llene el espacio
+    max_w, max_h = 680, 500
     img_producto.thumbnail((max_w, max_h), Image.Resampling.LANCZOS)
     
     x_pos = (canvas_w - img_producto.width) // 2
-    y_pos = (480 - img_producto.height) // 2 + 10
+    y_pos = (500 - img_producto.height) // 2 + 10
     
-    # Se pega sobre la sección blanca superior
     canvas.paste(img_producto, (x_pos, y_pos), img_producto)
 
     draw = ImageDraw.Draw(canvas)
@@ -409,7 +428,7 @@ def generar_imagen_banner(imagen_bytes, precio_oferta, precio_antes):
         w_ant = bbox_ant[2] - bbox_ant[0]
         h_ant = bbox_ant[3] - bbox_ant[1]
         x_ant = (canvas_w - w_ant) // 2
-        y_ant = 510
+        y_ant = 520
 
         draw.text((x_ant, y_ant), texto_antes, fill=(200, 30, 30, 255), font=font_antes)
         line_y = y_ant + (h_ant // 2) + 2
@@ -445,7 +464,7 @@ def generar_imagen_banner(imagen_bytes, precio_oferta, precio_antes):
     return output
 
 # ==========================================
-# 8. MANEJADOR Y PUBLICADOR DE TELEGRAM
+# 9. MANEJADOR Y PUBLICADOR DE TELEGRAM
 # ==========================================
 async def asegurar_logo_local(context: ContextTypes.DEFAULT_TYPE):
     if not os.path.exists(LOGO_PATH):
