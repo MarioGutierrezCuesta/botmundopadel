@@ -144,8 +144,112 @@ def procesar_enlace_afiliado(url_original):
     return url_final, tienda, url_real
 
 # ==========================================
-# 5. SCRAPERS DIRECTOS
+# 5. SCRAPERS Y VALIDACIÓN ANTI-PLACEHOLDER
 # ==========================================
+def es_imagen_valida(url_img):
+    """Comprueba que la URL no sea un placeholder ni una imagen SVG/base64 vacía"""
+    if not url_img:
+        return False
+    
+    url_lower = url_img.lower()
+    placeholders_prohibidos = [
+        'data:image', 'svg', 'placeholder', 'loading', 'default', 
+        'blank', 'grey', 'grey-dot', 'no-image', 'pixel'
+    ]
+    if any(p in url_lower for p in placeholders_prohibidos):
+        return False
+    return True
+
+def obtener_datos_padelnuestro(url_real):
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+        'Accept-Language': 'es-ES,es;q=0.9',
+    }
+    
+    html_content = ""
+    # Intento 1: Petición directa
+    try:
+        resp = requests.get(url_real, headers=headers, timeout=10)
+        if resp.status_code == 200:
+            html_content = resp.text
+    except Exception:
+        pass
+
+    # Intento 2: Usar ScraperAPI con ejecución de JS si la directa no trae datos
+    if not html_content or "product" not in html_content.lower():
+        if SCRAPER_API_KEY:
+            try:
+                payload = {
+                    'api_key': SCRAPER_API_KEY, 
+                    'url': url_real, 
+                    'render': 'true',
+                    'country_code': 'es'
+                }
+                r = requests.get('http://api.scraperapi.com', params=payload, timeout=30)
+                if r.status_code == 200:
+                    html_content = r.text
+            except Exception:
+                pass
+
+    if not html_content:
+        return None
+
+    soup = BeautifulSoup(html_content, 'html.parser')
+    
+    # Extraer Título
+    titulo_elem = soup.find('meta', property='og:title') or soup.find('h1')
+    titulo = titulo_elem.get_text().strip() if titulo_elem else "Producto Padel Nuestro"
+
+    img_candidate = None
+
+    # 1. Búsqueda en JSON-LD (Lo más seguro)
+    scripts = soup.find_all('script', type='application/ld+json')
+    for s in scripts:
+        try:
+            if not s.string:
+                continue
+            data = json.loads(s.string)
+            if isinstance(data, list):
+                data = data[0]
+            if data.get('@type') == 'Product' and 'image' in data:
+                imgs = data['image']
+                url_test = imgs[0] if isinstance(imgs, list) else imgs
+                if es_imagen_valida(url_test):
+                    img_candidate = url_test
+                    break
+        except Exception:
+            pass
+
+    # 2. Búsqueda por meta og:image
+    if not es_imagen_valida(img_candidate):
+        og_img = soup.find('meta', property='og:image')
+        if og_img and es_imagen_valida(og_img.get('content')):
+            img_candidate = og_img['content']
+
+    # 3. Búsqueda en etiquetas <img> con atributos de Lazy Loading
+    if not es_imagen_valida(img_candidate):
+        for img in soup.find_all('img'):
+            src = img.get('data-src') or img.get('data-original') or img.get('data-lazy') or img.get('src')
+            if es_imagen_valida(src):
+                if any(k in src for k in ['catalog/product', 'media/', 'products/']):
+                    img_candidate = src
+                    break
+
+    # Normalización de URL
+    if img_candidate:
+        if img_candidate.startswith('//'):
+            img_candidate = 'https:' + img_candidate
+        elif img_candidate.startswith('/'):
+            img_candidate = 'https://www.padelnuestro.com' + img_candidate
+            
+        # Eliminar sufijos de miniatura para obtener alta resolución
+        img_candidate = re.sub(r'-\d+x\d+\.', '.', img_candidate)
+
+    return {
+        "titulo": titulo,
+        "imagen_url": img_candidate if es_imagen_valida(img_candidate) else None
+    }
+
 def obtener_datos_padelmarket(url_real):
     headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
     try:
@@ -154,71 +258,10 @@ def obtener_datos_padelmarket(url_real):
             soup = BeautifulSoup(resp.text, 'html.parser')
             titulo = soup.find('meta', property='og:title')
             imagen = soup.find('meta', property='og:image')
+            img_url = imagen['content'] if imagen else None
             return {
                 "titulo": titulo['content'] if titulo else "Producto PadelMarket",
-                "imagen_url": imagen['content'] if imagen else None
-            }
-    except Exception:
-        pass
-    return None
-
-def obtener_datos_padelnuestro(url_real):
-    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'}
-    try:
-        resp = requests.get(url_real, headers=headers, timeout=12)
-        if resp.status_code == 200:
-            soup = BeautifulSoup(resp.text, 'html.parser')
-            titulo = soup.find('meta', property='og:title')
-            
-            img_url = None
-
-            # 1. Buscar en JSON-LD (Estructura de datos oficial de productos, evita placeholders)
-            scripts_json = soup.find_all('script', type='application/ld+json')
-            for s in scripts_json:
-                try:
-                    data = json.loads(s.string)
-                    if isinstance(data, list):
-                        data = data[0]
-                    if data.get('@type') == 'Product' and 'image' in data:
-                        images = data['image']
-                        if isinstance(images, list) and len(images) > 0:
-                            img_url = images[0]
-                        elif isinstance(images, str):
-                            img_url = images
-                        break
-                except Exception:
-                    pass
-
-            # 2. Si no hay JSON-LD, buscar la imagen del producto evitando placeholders
-            if not img_url:
-                imagenes = soup.find_all('img')
-                for img in imagenes:
-                    src = img.get('data-src') or img.get('data-original') or img.get('src') or ''
-                    if src and not any(placeholder in src.lower() for placeholder in ['placeholder', 'loading', 'default', 'svg', 'data:image']):
-                        if 'media/catalog/product' in src or 'images/' in src or 'products/' in src:
-                            img_url = src
-                            break
-
-            # 3. Fallback a og:image
-            if not img_url:
-                imagen_meta = soup.find('meta', property='og:image')
-                if imagen_meta:
-                    img_url = imagen_meta['content']
-
-            # Limpiar URL si es relativa o miniatura
-            if img_url:
-                if img_url.startswith('//'):
-                    img_url = 'https:' + img_url
-                elif img_url.startswith('/'):
-                    img_url = 'https://www.padelnuestro.com' + img_url
-
-                # Forzar alta resolución sustituyendo dimensiones de caché
-                img_url = re.sub(r'-\d+x\d+\.', '.', img_url)
-                img_url = re.sub(r'/cache/[^/]+/', '/image/', img_url)
-
-            return {
-                "titulo": titulo['content'] if titulo else "Producto Padel Nuestro",
-                "imagen_url": img_url
+                "imagen_url": img_url if es_imagen_valida(img_url) else None
             }
     except Exception:
         pass
@@ -247,14 +290,15 @@ def obtener_datos_amazon(url_real):
         soup = BeautifulSoup(html_content, 'html.parser')
         titulo = soup.find(id="productTitle")
         imagen = soup.find(id="landingImage")
+        img_url = imagen['src'] if imagen and 'src' in imagen.attrs else None
         return {
             "titulo": titulo.get_text().strip() if titulo else "Producto Amazon",
-            "imagen_url": imagen['src'] if imagen and 'src' in imagen.attrs else None
+            "imagen_url": img_url if es_imagen_valida(img_url) else None
         }
     return None
 
 # ==========================================
-# 6. GENERADOR GRÁFICO
+# 6. GENERADOR GRÁFICO SEGURO
 # ==========================================
 def recortar_bordes_blancos(img):
     img_rgb = img.convert("RGB")
@@ -277,19 +321,20 @@ def crear_fondo_degradado(width, height, color_inicio=(255, 255, 255), color_fin
     return base
 
 def generar_imagen_banner(imagen_url, precio_oferta, precio_antes):
+    if not es_imagen_valida(imagen_url):
+        return None
+
     try:
         r = requests.get(imagen_url, timeout=10)
         img_producto = Image.open(io.BytesIO(r.content)).convert("RGBA")
+        
+        # VERIFICACIÓN RIGUROSA: Si la imagen descargada es menor a 150x150 px, es un icono o placeholder
+        if img_producto.width < 150 or img_producto.height < 150:
+            return None
     except Exception:
         return None
 
     img_producto = recortar_bordes_blancos(img_producto)
-
-    if img_producto.width < 350 or img_producto.height < 350:
-        factor_escala = max(500 / img_producto.width, 500 / img_producto.height)
-        nuevo_w = int(img_producto.width * factor_escala)
-        nuevo_h = int(img_producto.height * factor_escala)
-        img_producto = img_producto.resize((nuevo_w, nuevo_h), Image.Resampling.LANCZOS)
 
     canvas_w, canvas_h = 800, 800
     canvas = crear_fondo_degradado(canvas_w, canvas_h)
@@ -306,8 +351,7 @@ def generar_imagen_banner(imagen_url, precio_oferta, precio_antes):
     if os.path.exists(LOGO_PATH):
         try:
             logo = Image.open(LOGO_PATH).convert("RGBA")
-            size = (80, 80)
-            logo.thumbnail(size, Image.Resampling.LANCZOS)
+            logo.thumbnail((80, 80), Image.Resampling.LANCZOS)
             
             mask = Image.new('L', logo.size, 0)
             draw_mask = ImageDraw.Draw(mask)
@@ -429,6 +473,7 @@ async def procesar_mensaje(update: Update, context: ContextTypes.DEFAULT_TYPE):
     texto_boton = f"🛍️ VER OFERTA EN {tienda}"
     keyboard = InlineKeyboardMarkup([[InlineKeyboardButton(texto_boton, url=url_afiliado)]])
 
+    # Intentar generar el banner sólo si la imagen extraída es válida
     foto_banner = None
     if imagen_url_original and (precio_oferta or precio_antes):
         foto_banner = generar_imagen_banner(imagen_url_original, precio_oferta, precio_antes)
@@ -442,15 +487,8 @@ async def procesar_mensaje(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 parse_mode="Markdown",
                 reply_markup=keyboard
             )
-        elif imagen_url_original:
-            await context.bot.send_photo(
-                chat_id=CANAL_ID,
-                photo=imagen_url_original,
-                caption=caption,
-                parse_mode="Markdown",
-                reply_markup=keyboard
-            )
         else:
+            # SI LA IMAGEN DE PADELNUESTRO FALLA O ES GRIS: Publicar sin imagen o con vista previa limpia (Evita fotos grises)
             await context.bot.send_message(
                 chat_id=CANAL_ID,
                 text=caption,
