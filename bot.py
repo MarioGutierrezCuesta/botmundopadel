@@ -16,7 +16,7 @@ from telegram.ext import Application, MessageHandler, filters, ContextTypes
 # ==========================================
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN", "8801288601:AAGjU2UNrzNurMg1XGVdL_tWjrLqIcRBWUc")
 SCRAPER_API_KEY = os.environ.get("SCRAPER_API_KEY", "fc389bd2dcdb6a12d0c7d839b0d4cf58")
-CANAL_ID = "@mundopadelesp"
+CANAL_ID = "@mundo_padel_esp"
 
 TAG_AMAZON = "mundopadel09a-21" 
 TAG_TEMU = "ala334124"
@@ -63,13 +63,6 @@ def cargar_fuente_gigante(tamano=60, es_bold=True):
             return ImageFont.truetype(nombre_archivo, tamano)
         except Exception:
             pass
-
-    for path in ["/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", "/usr/share/fonts/ttf/DejaVuSans-Bold.ttf"]:
-        if os.path.exists(path):
-            try:
-                return ImageFont.truetype(path, tamano)
-            except Exception:
-                pass
 
     return ImageFont.load_default()
 
@@ -161,16 +154,11 @@ def es_imagen_valida_producto(url, bytes_img):
         img = Image.open(io.BytesIO(bytes_img)).convert("RGB")
         w, h = img.size
         
-        if w < 200 or h < 200:
+        if w < 150 or h < 150:
             return False
 
         ratio = w / float(h)
-        if ratio > 1.8 or ratio < 0.4:
-            return False
-
-        stat = ImageStat.Stat(img)
-        desviacion_std = sum(stat.stddev) / len(stat.stddev)
-        if desviacion_std < 12:
+        if ratio > 2.2 or ratio < 0.35:
             return False
 
         return True
@@ -178,7 +166,7 @@ def es_imagen_valida_producto(url, bytes_img):
         return False
 
 # ==========================================
-# 6. SCRAPERS ESPECÍFICOS (PADELNUESTRO, PADELMARKET, AMAZON)
+# 6. SCRAPERS ESPECÍFICOS
 # ==========================================
 def obtener_datos_padelnuestro(url_real):
     html_content = ""
@@ -197,7 +185,7 @@ def obtener_datos_padelnuestro(url_real):
             pass
 
     if not html_content:
-        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'}
+        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
         try:
             r = requests.get(url_real, headers=headers, timeout=12)
             if r.status_code == 200:
@@ -218,29 +206,15 @@ def obtener_datos_padelnuestro(url_real):
         candidatos_url.append(og_img['content'])
 
     for img in soup.find_all('img'):
-        src = img.get('src') or img.get('data-src') or img.get('data-original') or img.get('data-zoom-image')
+        src = img.get('src') or img.get('data-src') or img.get('data-original')
         if src and ('catalog/product' in src or 'media/catalog' in src):
             candidatos_url.append(src)
 
-    scripts = soup.find_all('script', type='application/ld+json')
-    for s in scripts:
-        try:
-            if not s.string: continue
-            data = json.loads(s.string)
-            if isinstance(data, list): data = data[0]
-            if data.get('@type') == 'Product' and 'image' in data:
-                imgs = data['image']
-                if isinstance(imgs, list): candidatos_url.extend(imgs)
-                elif isinstance(imgs, str): candidatos_url.append(imgs)
-        except Exception:
-            pass
-
     imagen_valida_bytes = None
-    headers_img = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
+    headers_img = {'User-Agent': 'Mozilla/5.0'}
 
     for u in candidatos_url:
-        if not u or 'data:image' in u: 
-            continue
+        if not u or 'data:image' in u: continue
         if u.startswith('//'): u = 'https:' + u
         elif u.startswith('/'): u = 'https://www.padelnuestro.com' + u
 
@@ -255,13 +229,10 @@ def obtener_datos_padelnuestro(url_real):
         except Exception:
             continue
 
-    return {
-        "titulo": titulo,
-        "imagen_bytes": imagen_valida_bytes
-    }
+    return {"titulo": titulo, "imagen_bytes": imagen_valida_bytes}
 
 def obtener_datos_padelmarket(url_real):
-    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
+    headers = {'User-Agent': 'Mozilla/5.0'}
     try:
         resp = requests.get(url_real, headers=headers, timeout=12)
         if resp.status_code == 200:
@@ -302,19 +273,6 @@ def obtener_datos_amazon(url_real):
             pass
 
     if not html_content:
-        headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-            'Accept-Language': 'es-ES,es;q=0.9',
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8'
-        }
-        try:
-            resp = requests.get(url_real, headers=headers, timeout=12)
-            if resp.status_code == 200 and "captcha" not in resp.text.lower():
-                html_content = resp.text
-        except Exception:
-            pass
-
-    if not html_content:
         return None
 
     soup = BeautifulSoup(html_content, 'html.parser')
@@ -329,8 +287,8 @@ def obtener_datos_amazon(url_real):
             titulo = og_title.get('content')
             
     titulo_final = titulo if titulo else "Producto Amazon"
-
     candidatos_img = []
+    
     og_image = soup.find('meta', property='og:image')
     if og_image and og_image.get('content'):
         candidatos_img.append(og_image['content'])
@@ -350,15 +308,12 @@ def obtener_datos_amazon(url_real):
                 else:
                     candidatos_img.append(val)
 
-    img_block = soup.find('div', id='imageBlock') or soup.find('div', id='main-image-container')
-    if img_block:
-        for img in img_block.find_all('img'):
-            src = img.get('src')
-            if src:
-                candidatos_img.append(src)
-
     imagen_valida_bytes = None
-    headers_img = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
+    headers_img = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+        'Referer': 'https://www.amazon.es/',
+        'Accept': 'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8'
+    }
 
     for u in candidatos_img:
         if not u or 'data:image' in u or 'transparent-pixel' in u:
@@ -377,20 +332,16 @@ def obtener_datos_amazon(url_real):
         except Exception:
             continue
 
-    return {
-        "titulo": titulo_final,
-        "imagen_bytes": imagen_valida_bytes
-    }
+    return {"titulo": titulo_final, "imagen_bytes": imagen_valida_bytes}
 
 # ==========================================
-# 7. RECORTE DE MARGENES BLANCOS SEGURO (AUTOCROP)
+# 7. RECORTE DE MARGENES Y FONDOS
 # ==========================================
 def recortar_espacio_blanco_seguro(img_pil):
     try:
         img_rgba = img_pil.convert("RGBA")
         bg = Image.new("RGBA", img_rgba.size, (255, 255, 255, 255))
         diff = ImageChops.difference(img_rgba.convert("RGB"), bg.convert("RGB")).convert("L")
-        
         mask = diff.point(lambda p: 255 if p > 15 else 0)
         bbox = mask.getbbox()
         
@@ -400,23 +351,17 @@ def recortar_espacio_blanco_seguro(img_pil):
             y1 = max(0, bbox[1] - 12)
             x2 = min(w, bbox[2] + 12)
             y2 = min(h, bbox[3] + 12)
-            
             if (x2 - x1) > 100 and (y2 - y1) > 100:
                 return img_rgba.crop((x1, y1, x2, y2))
     except Exception:
         pass
     return img_pil
 
-# ==========================================
-# 8. GENERADOR GRÁFICO (DEGRADADO BLANCO A MENTA)
-# ==========================================
 def crear_fondo_degradado_ejemplo(width, height):
     color_blanco = (255, 255, 255)
     color_menta = (220, 245, 235)
-    
     base = Image.new("RGBA", (width, height), (255, 255, 255, 255))
     draw = ImageDraw.Draw(base)
-    
     for y in range(height):
         if y < int(height * 0.45):
             r, g, b = color_blanco
@@ -426,14 +371,14 @@ def crear_fondo_degradado_ejemplo(width, height):
             r = int(color_blanco[0] + (color_menta[0] - color_blanco[0]) * factor)
             g = int(color_blanco[1] + (color_menta[1] - color_blanco[1]) * factor)
             b = int(color_blanco[2] + (color_menta[2] - color_blanco[2]) * factor)
-            
         draw.line([(0, y), (width, y)], fill=(r, g, b, 255))
-        
     return base
 
+# ==========================================
+# 8. GENERADOR GRÁFICO 
+# ==========================================
 def generar_imagen_banner(imagen_bytes, precio_oferta, precio_antes):
-    if not imagen_bytes:
-        return None
+    if not imagen_bytes: return None
 
     try:
         img_producto = Image.open(io.BytesIO(imagen_bytes))
@@ -446,10 +391,8 @@ def generar_imagen_banner(imagen_bytes, precio_oferta, precio_antes):
 
     max_w, max_h = 680, 500
     img_producto.thumbnail((max_w, max_h), Image.Resampling.LANCZOS)
-    
     x_pos = (canvas_w - img_producto.width) // 2
     y_pos = (500 - img_producto.height) // 2 + 10
-    
     canvas.paste(img_producto, (x_pos, y_pos), img_producto)
 
     draw = ImageDraw.Draw(canvas)
@@ -458,11 +401,9 @@ def generar_imagen_banner(imagen_bytes, precio_oferta, precio_antes):
         try:
             logo = Image.open(LOGO_PATH).convert("RGBA")
             logo.thumbnail((80, 80), Image.Resampling.LANCZOS)
-            
             mask = Image.new('L', logo.size, 0)
             draw_mask = ImageDraw.Draw(mask)
             draw_mask.ellipse((0, 0, logo.size[0], logo.size[1]), fill=255)
-            
             draw.ellipse((35, 675, 35 + logo.size[0] + 8, 675 + logo.size[1] + 8), fill=(255, 255, 255, 255), outline=(210, 225, 220, 255), width=2)
             canvas.paste(logo, (39, 679), mask)
         except Exception:
@@ -478,8 +419,9 @@ def generar_imagen_banner(imagen_bytes, precio_oferta, precio_antes):
         h_ant = bbox_ant[3] - bbox_ant[1]
         x_ant = (canvas_w - w_ant) // 2
         y_ant = 520
-
         draw.text((x_ant, y_ant), texto_antes, fill=(200, 30, 30, 255), font=font_antes)
+        
+        # Línea de tachado sobre el precio original
         line_y = y_ant + (h_ant // 2) + 2
         draw.line([(x_ant - 12, line_y), (x_ant + w_ant + 12, line_y)], fill=(200, 30, 30, 255), width=5)
 
@@ -488,20 +430,12 @@ def generar_imagen_banner(imagen_bytes, precio_oferta, precio_antes):
         bbox_of = draw.textbbox((0, 0), texto_oferta, font=font_oferta)
         w_of = bbox_of[2] - bbox_of[0]
         h_of = bbox_of[3] - bbox_of[1]
-
         pad_x, pad_y = 45, 18
         rect_w = w_of + (pad_x * 2)
         rect_h = h_of + (pad_y * 2)
-
         rect_x = canvas_w - rect_w - 40
         rect_y = 620
-
-        draw.rounded_rectangle(
-            [rect_x, rect_y, rect_x + rect_w, rect_y + rect_h],
-            radius=22,
-            fill=(255, 102, 0, 255)
-        )
-
+        draw.rounded_rectangle([rect_x, rect_y, rect_x + rect_w, rect_y + rect_h], radius=22, fill=(255, 102, 0, 255))
         text_x = rect_x + pad_x - bbox_of[0]
         text_y = rect_y + pad_y - bbox_of[1]
         draw.text((text_x, text_y), texto_oferta, fill=(255, 255, 255, 255), font=font_oferta)
@@ -526,15 +460,12 @@ async def asegurar_logo_local(context: ContextTypes.DEFAULT_TYPE):
 
 async def procesar_mensaje(update: Update, context: ContextTypes.DEFAULT_TYPE):
     mensaje_actual = update.message or update.channel_post
-    if not mensaje_actual:
-        return
+    if not mensaje_actual: return
 
     texto = mensaje_actual.text or mensaje_actual.caption
-    if not texto:
-        return
+    if not texto: return
 
     await asegurar_logo_local(context)
-
     partes = [p.strip() for p in texto.split('|')]
     url_input = partes[0]
     precio_oferta = partes[1] if len(partes) > 1 else None
@@ -577,11 +508,7 @@ async def procesar_mensaje(update: Update, context: ContextTypes.DEFAULT_TYPE):
     caption = f"🎾 **NUEVO CHOLLAZO{dto_str}** #Publicidad\n\n"
     caption += f"✅ {titulo_final}\n\n"
     caption += f"Sugerido por TU CANAL DE CHOLLOS\n{CANAL_ID}\n\n"
-
-    if tienda == "AMAZON":
-        caption += "En calidad de Afiliado de Amazon, obtengo ingresos por las compras adscritas."
-    else:
-        caption += f"En calidad de Afiliado de {tienda}, obtengo ingresos por las compras adscritas."
+    caption += f"En calidad de Afiliado de {tienda}, obtengo ingresos por las compras adscritas."
 
     texto_boton = f"🛍️ VER OFERTA EN {tienda}"
     keyboard = InlineKeyboardMarkup([[InlineKeyboardButton(texto_boton, url=url_afiliado)]])
@@ -596,22 +523,16 @@ async def procesar_mensaje(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         if foto_banner:
             await context.bot.send_photo(
-                chat_id=CANAL_ID,
-                photo=foto_banner,
-                caption=caption,
-                parse_mode="Markdown",
-                reply_markup=keyboard
+                chat_id=CANAL_ID, photo=foto_banner, caption=caption, 
+                parse_mode="Markdown", reply_markup=keyboard
             )
             await mensaje_actual.reply_text(f"✅ ¡Anuncio con BANNER de **{tienda}** publicado en el canal!")
         else:
             await context.bot.send_message(
-                chat_id=CANAL_ID,
-                text=caption,
-                parse_mode="Markdown",
-                reply_markup=keyboard,
-                disable_web_page_preview=False
+                chat_id=CANAL_ID, text=caption, parse_mode="Markdown", 
+                reply_markup=keyboard, disable_web_page_preview=False
             )
-            await mensaje_actual.reply_text(f"✅ ¡Anuncio (solo texto) de **{tienda}** publicado! (No se pudo procesar la foto).")
+            await mensaje_actual.reply_text(f"✅ ¡Anuncio (solo texto) de **{tienda}** publicado! (No se pudo descargar la foto).")
             
     except Exception as e:
         await mensaje_actual.reply_text(f"❌ Error al publicar en Telegram: {str(e)}")
