@@ -126,17 +126,12 @@ def obtener_datos_padelnuestro(url_real):
         resp = requests.get(url_real, headers=headers, timeout=12)
         if resp.status_code == 200:
             soup = BeautifulSoup(resp.text, 'html.parser')
-            
-            # Intento de extracción por Meta Tags Open Graph
             titulo = soup.find('meta', property='og:title')
             imagen = soup.find('meta', property='og:image')
             
-            titulo_val = titulo['content'] if titulo else "Producto Padel Nuestro"
-            imagen_val = imagen['content'] if imagen else None
-            
             return {
-                "titulo": titulo_val,
-                "imagen_url": imagen_val
+                "titulo": titulo['content'] if titulo else "Producto Padel Nuestro",
+                "imagen_url": imagen['content'] if imagen else None
             }
     except Exception:
         pass
@@ -182,26 +177,67 @@ async def procesar_mensaje(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not texto:
         return
 
-    # Extraer primera URL del mensaje
-    urls = re.findall(r'https?://[^\s]+', texto)
+    # Desglosar si viene con el formato: URL | PRECIO_OFERTA | PRECIO_ANTES | TITULO
+    partes = [p.strip() for p in texto.split('|')]
+    url_input = partes[0]
+    precio_oferta = partes[1] if len(partes) > 1 else None
+    precio_antes = partes[2] if len(partes) > 2 else None
+    titulo_manual = partes[3] if len(partes) > 3 else None
+
+    # Extraer URL del primer segmento
+    urls = re.findall(r'https?://[^\s]+', url_input)
     if not urls:
+        await update.message.reply_text("❌ No se encontró ninguna URL válida en el mensaje.")
         return
 
     url_original = urls[0]
     url_afiliado, tienda, url_scraping = procesar_enlace_afiliado(url_original)
 
-    # Obtener información según la tienda
+    # Scrapear imagen/título si no se pasa manual
     datos = None
     if tienda == "PADELNUESTRO":
         datos = obtener_datos_padelnuestro(url_scraping)
     elif tienda == "AMAZON":
         datos = obtener_datos_amazon(url_scraping)
 
-    if datos and datos.get("imagen_url"):
-        mensaje = f"✅ ¡Chollo de **{tienda}** publicado con éxito!\n\nEnlace: {url_afiliado}"
-        await update.message.reply_text(mensaje, parse_mode="Markdown")
-    else:
-        await update.message.reply_text(f"❌ Error: No se pudo obtener la información o imagen del producto de {tienda}.")
+    titulo_final = titulo_manual or (datos.get("titulo") if datos else "Oferta Padel")
+    imagen_url = datos.get("imagen_url") if datos else None
+
+    # Formatear el texto de publicación del canal
+    caption = f"🔥 **{titulo_final}**\n\n"
+    if precio_oferta:
+        caption += f"💰 **Precio:** {precio_oferta}€"
+        if precio_antes:
+            caption += f" ~({precio_antes}€)~"
+        caption += "\n\n"
+    caption += f"🛒 **Tienda:** {tienda}\n"
+    caption += f"🔗 **Enlace:** {url_afiliado}"
+
+    # Crear botón inline para la oferta
+    keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("🔥 VER CHOLLO", url=url_afiliado)]])
+
+    try:
+        # Enviar al canal oficial
+        if imagen_url:
+            await context.bot.send_photo(
+                chat_id=CANAL_ID,
+                photo=imagen_url,
+                caption=caption,
+                parse_mode="Markdown",
+                reply_markup=keyboard
+            )
+        else:
+            await context.bot.send_message(
+                chat_id=CANAL_ID,
+                text=caption,
+                parse_mode="Markdown",
+                reply_markup=keyboard,
+                disable_web_page_preview=False
+            )
+            
+        await update.message.reply_text(f"✅ ¡Chollo de **{tienda}** publicado con éxito en {CANAL_ID}!")
+    except Exception as e:
+        await update.message.reply_text(f"❌ Error al publicar en el canal: {str(e)}\nAsegúrate de que el Bot sea Administrador en {CANAL_ID}.")
 
 def main():
     application = Application.builder().token(TELEGRAM_TOKEN).build()
