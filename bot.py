@@ -44,15 +44,18 @@ def run_web():
 threading.Thread(target=run_web, daemon=True).start()
 
 # ==========================================
-# 3. GESTIÓN DE FUENTES TIPOGRÁFICAS
+# 3. CARGA DE FUENTES SIN ERRORES EN SERVIDOR
 # ==========================================
-def obtener_fuente(es_bold=False, tamano=40):
-    nombre_archivo = "Roboto-Bold.ttf" if es_bold else "Roboto-Regular.ttf"
-    url_fuente = f"https://github.com/google/fonts/raw/main/apache/roboto/{nombre_archivo}"
-    
+def cargar_fuente_gigante(tamano=60, es_bold=True):
+    """
+    Descarga una fuente real TTF directamente desde GitHub de Google Fonts
+    para evitar que se use la fuente defectuosa por defecto de Linux/Render.
+    """
+    nombre_archivo = "OpenSans-Bold.ttf" if es_bold else "OpenSans-Regular.ttf"
     if not os.path.exists(nombre_archivo):
+        url = f"https://github.com/google/fonts/raw/main/ofl/opensans/{nombre_archivo}"
         try:
-            r = requests.get(url_fuente, timeout=10)
+            r = requests.get(url, timeout=10)
             if r.status_code == 200:
                 with open(nombre_archivo, "wb") as f:
                     f.write(r.content)
@@ -64,7 +67,15 @@ def obtener_fuente(es_bold=False, tamano=40):
             return ImageFont.truetype(nombre_archivo, tamano)
         except Exception:
             pass
-            
+
+    # Intentar fuentes típicas de Linux si la descarga falló
+    for path in ["/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", "/usr/share/fonts/ttf/DejaVuSans-Bold.ttf"]:
+        if os.path.exists(path):
+            try:
+                return ImageFont.truetype(path, tamano)
+            except Exception:
+                pass
+
     return ImageFont.load_default()
 
 # ==========================================
@@ -202,7 +213,7 @@ def obtener_datos_amazon(url_real):
     return None
 
 # ==========================================
-# 6. GENERADOR GRÁFICO (ESCALADO NORMALIZADO DE IMAGEN)
+# 6. GENERADOR GRÁFICO (GARANTIZADO FUENTE Y ESCALA)
 # ==========================================
 def recortar_bordes_blancos(img):
     img_rgb = img.convert("RGB")
@@ -221,20 +232,20 @@ def generar_imagen_banner(imagen_url, precio_oferta, precio_antes):
     except Exception:
         return None
 
-    # Recortar bordes blancos sobrantes
+    # Recortar espacios vacíos alrededor de la foto del producto
     img_producto = recortar_bordes_blancos(img_producto)
 
-    # Definir lienzo estándar fijo (800x800 píxeles)
+    # LIENZO CONTROLADO DE 800x800 PÍXELES
     canvas_w, canvas_h = 800, 800
     canvas = Image.new("RGBA", (canvas_w, canvas_h), (255, 255, 255, 255))
 
-    # Ajustar tamaño del producto al área superior (máximo 600x480 px)
-    max_w, max_h = 600, 480
+    # Ajustar tamaño de la imagen del producto
+    max_w, max_h = 600, 460
     img_producto.thumbnail((max_w, max_h), Image.Resampling.LANCZOS)
     
-    # Centrar producto en la zona superior
+    # Pegar el producto centrado arriba
     x_pos = (canvas_w - img_producto.width) // 2
-    y_pos = (500 - img_producto.height) // 2 + 10
+    y_pos = (480 - img_producto.height) // 2 + 10
     canvas.paste(img_producto, (x_pos, y_pos), img_producto)
 
     # Colocar logo en la esquina inferior izquierda
@@ -242,46 +253,47 @@ def generar_imagen_banner(imagen_url, precio_oferta, precio_antes):
         try:
             logo = Image.open(LOGO_PATH).convert("RGBA")
             logo.thumbnail((120, 120))
-            canvas.paste(logo, (40, 630), logo)
+            canvas.paste(logo, (40, 640), logo)
         except Exception:
             pass
 
     draw = ImageDraw.Draw(canvas)
 
-    # Cargar fuentes grandes proporcionales al lienzo de 800px
-    font_oferta = obtener_fuente(es_bold=True, tamano=65)
-    font_antes = obtener_fuente(es_bold=False, tamano=42)
+    # Cargar Fuentes TTF reales descargadas en tiempo de ejecución
+    font_oferta = cargar_fuente_gigante(tamano=70, es_bold=True)
+    font_antes = cargar_fuente_gigante(tamano=45, es_bold=False)
 
-    # 1. Precio Anterior Tachado (Centrado)
+    # 1. Dibujar Precio Anterior Tachado (Centrado)
     if precio_antes:
         texto_antes = f"{precio_antes}€"
         bbox_ant = draw.textbbox((0, 0), texto_antes, font=font_antes)
         w_ant = bbox_ant[2] - bbox_ant[0]
         h_ant = bbox_ant[3] - bbox_ant[1]
         x_ant = (canvas_w - w_ant) // 2
-        y_ant = 530
+        y_ant = 510
 
-        draw.text((x_ant, y_ant), texto_antes, fill=(200, 40, 40, 255), font=font_antes)
-        line_y = y_ant + (h_ant // 2) + 4
-        draw.line([(x_ant - 12, line_y), (x_ant + w_ant + 12, line_y)], fill=(200, 40, 40, 255), width=5)
+        draw.text((x_ant, y_ant), texto_antes, fill=(200, 30, 30, 255), font=font_antes)
+        line_y = y_ant + (h_ant // 2) + 2
+        draw.line([(x_ant - 12, line_y), (x_ant + w_ant + 12, line_y)], fill=(200, 30, 30, 255), width=5)
 
-    # 2. Botón Naranja Gigante con el Precio de Oferta (Derecha)
+    # 2. Dibujar Píldora Naranja con el Precio Final (Derecha Abajo)
     if precio_oferta:
         texto_oferta = f"{precio_oferta}€"
         bbox_of = draw.textbbox((0, 0), texto_oferta, font=font_oferta)
         w_of = bbox_of[2] - bbox_of[0]
         h_of = bbox_of[3] - bbox_of[1]
 
-        pad_x, pad_y = 40, 16
+        pad_x, pad_y = 45, 18
         rect_w = w_of + (pad_x * 2)
         rect_h = h_of + (pad_y * 2)
 
         rect_x = canvas_w - rect_w - 40
-        rect_y = 630
+        rect_y = 620
 
+        # Fondo naranja redondeado
         draw.rounded_rectangle(
             [rect_x, rect_y, rect_x + rect_w, rect_y + rect_h],
-            radius=20,
+            radius=22,
             fill=(255, 102, 0, 255)
         )
 
