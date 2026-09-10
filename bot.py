@@ -6,7 +6,7 @@ import threading
 import requests
 from urllib.parse import quote, unquote
 from bs4 import BeautifulSoup
-from PIL import Image, ImageDraw, ImageFont, ImageChops
+from PIL import Image, ImageDraw, ImageFont, ImageChops, ImageStat
 from flask import Flask
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, MessageHandler, filters, ContextTypes
@@ -176,7 +176,6 @@ def obtener_datos_amazon(url_real):
     except Exception:
         pass
 
-    # Backup mediante ScraperAPI solo si se bloquea la petición directa
     if not html_content and SCRAPER_API_KEY:
         payload = {'api_key': SCRAPER_API_KEY, 'url': url_real, 'country_code': 'es'}
         try:
@@ -197,13 +196,18 @@ def obtener_datos_amazon(url_real):
     return None
 
 # ==========================================
-# 5. GENERADOR GRÁFICO (RECORTE Y AUTO-ESCALADO)
+# 5. GENERADOR GRÁFICO (RECORTE AGRESIVO Y MAXIMIZADO)
 # ==========================================
-def recortar_bordes_blancos(img):
-    """Elimina los márgenes blancos o transparentes sobrantes alrededor del producto"""
-    bg = Image.new(img.mode, img.size, (255, 255, 255, 255))
-    diff = ImageChops.difference(img, bg)
-    bbox = diff.getbbox()
+def recortar_objeto_inteligente(img, umbral=240):
+    """Fuerza la detección del producto eliminando bordes claros/blancos"""
+    gray = img.convert('L')
+    # Convertir a binario: los píxeles más claros que el umbral se vuelven blancos
+    bw = gray.point(lambda p: 255 if p > umbral else 0)
+    
+    # Invertir para que el fondo sea negro y el objeto sea blanco
+    inverted = ImageChops.invert(bw)
+    bbox = inverted.getbbox()
+    
     if bbox:
         return img.crop(bbox)
     return img
@@ -215,39 +219,45 @@ def generar_imagen_banner(imagen_url, precio_oferta, precio_antes):
     except Exception:
         return None
 
-    # Recortar el lienzo blanco gigante que traen las tiendas de origen
-    img_producto = recortar_bordes_blancos(img_producto)
+    # 1. Recorte inteligente que elimina el fondo aunque no sea blanco 100% puro
+    img_producto = recortar_objeto_inteligente(img_producto)
 
-    canvas_w, canvas_h = 800, 800
+    # Canvas de 800x600 px (Relación de aspecto optimizada para Telegram)
+    canvas_w, canvas_h = 800, 600
     canvas = Image.new("RGBA", (canvas_w, canvas_h), (255, 255, 255, 255))
 
-    # Redimensionar la imagen recortada para maximizar su tamaño visual
-    img_producto.thumbnail((700, 480), Image.Resampling.LANCZOS)
+    # 2. Escalar el producto para ocupar el 90% del ancho (Máxima visibilidad)
+    max_w = int(canvas_w * 0.90)  # 720 px de ancho máximo
+    max_h = 380                    # Altura máxima permitida para dejar espacio al precio
+
+    img_producto.thumbnail((max_w, max_h), Image.Resampling.LANCZOS)
+    
+    # Centrar la imagen en la parte superior
     x_pos = (canvas_w - img_producto.width) // 2
-    y_pos = (520 - img_producto.height) // 2 + 20
+    y_pos = (400 - img_producto.height) // 2 + 10
     canvas.paste(img_producto, (x_pos, y_pos), img_producto)
 
-    # Añadir Logo
+    # 3. Insertar Logo
     if os.path.exists(LOGO_PATH):
         try:
             logo = Image.open(LOGO_PATH).convert("RGBA")
-            logo.thumbnail((95, 95))
-            canvas.paste(logo, (35, 670), logo)
+            logo.thumbnail((80, 80))
+            canvas.paste(logo, (25, 500), logo)
         except Exception:
             pass
 
     draw = ImageDraw.Draw(canvas)
     
     try:
-        font_oferta = ImageFont.truetype("arialbd.ttf", 68)
-        font_antes = ImageFont.truetype("arial.ttf", 42)
+        font_oferta = ImageFont.truetype("arialbd.ttf", 60)
+        font_antes = ImageFont.truetype("arial.ttf", 36)
     except IOError:
         font_oferta = ImageFont.load_default()
         font_antes = ImageFont.load_default()
 
-    y_cursor = 550
+    y_cursor = 410
 
-    # Precio Anterior Tachado
+    # 4. Dibujar Precio Anterior (Tachado en rojo)
     if precio_antes:
         texto_antes = f"{precio_antes}€"
         bbox = draw.textbbox((0, 0), texto_antes, font=font_antes)
@@ -256,25 +266,25 @@ def generar_imagen_banner(imagen_url, precio_oferta, precio_antes):
         x_text = (canvas_w - w_text) // 2
 
         draw.text((x_text, y_cursor), texto_antes, fill=(200, 40, 40, 255), font=font_antes)
-        line_y = y_cursor + (h_text // 2) + 10
-        draw.line([(x_text - 10, line_y), (x_text + w_text + 10, line_y)], fill=(200, 40, 40, 255), width=5)
-        y_cursor += 60
+        line_y = y_cursor + (h_text // 2) + 8
+        draw.line([(x_text - 8, line_y), (x_text + w_text + 8, line_y)], fill=(200, 40, 40, 255), width=4)
+        y_cursor += 50
 
-    # Botón Naranja con Precio Final
+    # 5. Dibujar Botón Naranja con Precio Final
     if precio_oferta:
         texto_oferta = f"{precio_oferta}€"
         bbox_of = draw.textbbox((0, 0), texto_oferta, font=font_oferta)
         w_of = bbox_of[2] - bbox_of[0]
         h_of = bbox_of[3] - bbox_of[1]
 
-        padding_x, padding_y = 50, 16
+        padding_x, padding_y = 40, 12
         rect_w = w_of + (padding_x * 2)
         rect_h = h_of + (padding_y * 2)
 
         rect_x = (canvas_w - rect_w) // 2
         rect_y = y_cursor
 
-        draw.rounded_rectangle([rect_x, rect_y, rect_x + rect_w, rect_y + rect_h], radius=20, fill=(255, 102, 0, 255))
+        draw.rounded_rectangle([rect_x, rect_y, rect_x + rect_w, rect_y + rect_h], radius=16, fill=(255, 102, 0, 255))
         
         text_x = rect_x + padding_x - bbox_of[0]
         text_y = rect_y + padding_y - bbox_of[1]
@@ -294,7 +304,6 @@ async def procesar_mensaje(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not texto:
         return
 
-    # Entrada: URL | PRECIO_OFERTA | PRECIO_ANTES | TITULO_OPCIONAL
     partes = [p.strip() for p in texto.split('|')]
     url_input = partes[0]
     precio_oferta = partes[1] if len(partes) > 1 else None
@@ -332,7 +341,7 @@ async def procesar_mensaje(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except ValueError:
             pass
 
-    # Formato visual
+    # Formato del mensaje
     caption = f"🎾 **NUEVO CHOLLAZO{dto_str}** #Publicidad\n\n"
     caption += f"✅ {titulo_final}\n\n"
     caption += f"Sugerido por TU CANAL DE CHOLLOS\n{CANAL_ID}\n\n"
