@@ -44,10 +44,9 @@ def run_web():
 threading.Thread(target=run_web, daemon=True).start()
 
 # ==========================================
-# 3. GESTIÓN DE FUENTES TIPOGRÁFICAS (DESCARGA AUTOMÁTICA)
+# 3. GESTIÓN DE FUENTES TIPOGRÁFICAS
 # ==========================================
 def obtener_fuente(es_bold=False, tamano=40):
-    """Descarga e instala en memoria fuentes Roboto si no existen en el sistema"""
     nombre_archivo = "Roboto-Bold.ttf" if es_bold else "Roboto-Regular.ttf"
     url_fuente = f"https://github.com/google/fonts/raw/main/apache/roboto/{nombre_archivo}"
     
@@ -203,7 +202,7 @@ def obtener_datos_amazon(url_real):
     return None
 
 # ==========================================
-# 6. GENERADOR GRÁFICO (RÉPLICA EXACTA DE LA IMAGEN DE MUESTRA)
+# 6. GENERADOR GRÁFICO (ESCALADO NORMALIZADO DE IMAGEN)
 # ==========================================
 def recortar_bordes_blancos(img):
     img_rgb = img.convert("RGB")
@@ -222,66 +221,67 @@ def generar_imagen_banner(imagen_url, precio_oferta, precio_antes):
     except Exception:
         return None
 
+    # Recortar bordes blancos sobrantes
     img_producto = recortar_bordes_blancos(img_producto)
 
-    # Canvas de formato Cuadrado/Vertical (700x700 px)
-    canvas_w, canvas_h = 700, 700
+    # Definir lienzo estándar fijo (800x800 píxeles)
+    canvas_w, canvas_h = 800, 800
     canvas = Image.new("RGBA", (canvas_w, canvas_h), (255, 255, 255, 255))
 
-    # 1. Ajuste del producto centrado
-    max_w = 540
-    max_h = 420
+    # Ajustar tamaño del producto al área superior (máximo 600x480 px)
+    max_w, max_h = 600, 480
     img_producto.thumbnail((max_w, max_h), Image.Resampling.LANCZOS)
+    
+    # Centrar producto en la zona superior
     x_pos = (canvas_w - img_producto.width) // 2
-    y_pos = (450 - img_producto.height) // 2 + 10
+    y_pos = (500 - img_producto.height) // 2 + 10
     canvas.paste(img_producto, (x_pos, y_pos), img_producto)
 
-    # 2. Logo en la esquina inferior izquierda
+    # Colocar logo en la esquina inferior izquierda
     if os.path.exists(LOGO_PATH):
         try:
             logo = Image.open(LOGO_PATH).convert("RGBA")
-            logo.thumbnail((110, 110))
-            canvas.paste(logo, (40, 550), logo)
+            logo.thumbnail((120, 120))
+            canvas.paste(logo, (40, 630), logo)
         except Exception:
             pass
 
     draw = ImageDraw.Draw(canvas)
 
-    # Carga de fuentes garantizada
-    font_oferta = obtener_fuente(es_bold=True, tamano=52)
-    font_antes = obtener_fuente(es_bold=False, tamano=36)
+    # Cargar fuentes grandes proporcionales al lienzo de 800px
+    font_oferta = obtener_fuente(es_bold=True, tamano=65)
+    font_antes = obtener_fuente(es_bold=False, tamano=42)
 
-    # 3. Precio Anterior Tachado (Centrado)
+    # 1. Precio Anterior Tachado (Centrado)
     if precio_antes:
         texto_antes = f"{precio_antes}€"
         bbox_ant = draw.textbbox((0, 0), texto_antes, font=font_antes)
         w_ant = bbox_ant[2] - bbox_ant[0]
         h_ant = bbox_ant[3] - bbox_ant[1]
         x_ant = (canvas_w - w_ant) // 2
-        y_ant = 475
+        y_ant = 530
 
-        draw.text((x_ant, y_ant), texto_antes, fill=(180, 50, 50, 255), font=font_antes)
+        draw.text((x_ant, y_ant), texto_antes, fill=(200, 40, 40, 255), font=font_antes)
         line_y = y_ant + (h_ant // 2) + 4
-        draw.line([(x_ant - 10, line_y), (x_ant + w_ant + 10, line_y)], fill=(180, 50, 50, 255), width=4)
+        draw.line([(x_ant - 12, line_y), (x_ant + w_ant + 12, line_y)], fill=(200, 40, 40, 255), width=5)
 
-    # 4. Botón Naranja de Oferta (Derecha)
+    # 2. Botón Naranja Gigante con el Precio de Oferta (Derecha)
     if precio_oferta:
         texto_oferta = f"{precio_oferta}€"
         bbox_of = draw.textbbox((0, 0), texto_oferta, font=font_oferta)
         w_of = bbox_of[2] - bbox_of[0]
         h_of = bbox_of[3] - bbox_of[1]
 
-        pad_x, pad_y = 35, 14
+        pad_x, pad_y = 40, 16
         rect_w = w_of + (pad_x * 2)
         rect_h = h_of + (pad_y * 2)
 
-        # Posicionado a la derecha alineado con la base del logo
         rect_x = canvas_w - rect_w - 40
-        rect_y = 555
+        rect_y = 630
 
         draw.rounded_rectangle(
             [rect_x, rect_y, rect_x + rect_w, rect_y + rect_h],
-            radius=18,
+            radius=20,
             fill=(255, 102, 0, 255)
         )
 
