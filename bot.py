@@ -16,7 +16,9 @@ from telegram.ext import Application, MessageHandler, filters, ContextTypes
 # ==========================================
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN", "8801288601:AAGjU2UNrzNurMg1XGVdL_tWjrLqIcRBWUc")
 SCRAPER_API_KEY = os.environ.get("SCRAPER_API_KEY", "fc389bd2dcdb6a12d0c7d839b0d4cf58")
-CANAL_ID = "@mundo_padel_esp"
+
+# Canal de destino corregido sin guiones bajos
+CANAL_ID = "@MundoPadelEsp"
 
 TAG_AMAZON = "mundopadel09a-21" 
 TAG_TEMU = "ala334124"
@@ -421,7 +423,6 @@ def generar_imagen_banner(imagen_bytes, precio_oferta, precio_antes):
         y_ant = 520
         draw.text((x_ant, y_ant), texto_antes, fill=(200, 30, 30, 255), font=font_antes)
         
-        # Línea de tachado sobre el precio original
         line_y = y_ant + (h_ant // 2) + 2
         draw.line([(x_ant - 12, line_y), (x_ant + w_ant + 12, line_y)], fill=(200, 30, 30, 255), width=5)
 
